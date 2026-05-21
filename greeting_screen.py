@@ -43,7 +43,7 @@ class GreetingOverlay(QWidget):
         
         # Center card
         card = QFrame()
-        card.setFixedSize(420, 520)
+        card.setFixedSize(420, 580)
         card.setStyleSheet(f"""
             QFrame {{
                 background-color: {BG_SURFACE};
@@ -55,52 +55,11 @@ class GreetingOverlay(QWidget):
         card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_layout.setSpacing(12)
         
-        # Avatar placeholder (circular with gradient)
-        avatar = QLabel()
-        avatar.setFixedSize(140, 140)
-        
-        # Try to load custom photo
-        photo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assistant_photo.png")
-        if os.path.exists(photo_path):
-            pixmap = QPixmap(photo_path).scaled(140, 140, Qt.AspectRatioMode.KeepAspectByExpanding, 
-                                                 Qt.TransformationMode.SmoothTransformation)
-            # Make circular
-            from PyQt6.QtGui import QPixmap as QP
-            circular = QP(140, 140)
-            circular.fill(Qt.GlobalColor.transparent)
-            painter = QPainter(circular)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            path = QPainterPath()
-            path.addEllipse(0, 0, 140, 140)
-            painter.setClipPath(path)
-            painter.drawPixmap(0, 0, 140, 140, pixmap)
-            painter.end()
-            avatar.setPixmap(circular)
-        else:
-            # Draw avatar with initial + gradient background
-            canvas = QPixmap(140, 140)
-            canvas.fill(Qt.GlobalColor.transparent)
-            painter = QPainter(canvas)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            
-            # Circle background with gradient
-            gradient = QLinearGradient(0, 0, 140, 140)
-            gradient.setColorAt(0.0, QColor(94, 106, 210))  # BRAND_INDIGO
-            gradient.setColorAt(1.0, QColor(113, 112, 255))  # BRAND_ACCENT
-            painter.setBrush(QBrush(gradient))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(0, 0, 140, 140)
-            
-            # Letter "A"
-            painter.setFont(QFont("Segoe UI", 48, QFont.Weight.Bold))
-            painter.setPen(QColor(255, 255, 255))
-            painter.drawText(0, 0, 140, 140, Qt.AlignmentFlag.AlignCenter, "A")
-            painter.end()
-            avatar.setPixmap(canvas)
-        
-        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        avatar.setStyleSheet("padding: 0px; margin: 0px;")
-        card_layout.addWidget(avatar, alignment=Qt.AlignmentFlag.AlignCenter)
+        # Animated avatar
+        from live_avatar import AnimatedAvatarWidget
+        self.avatar_widget = AnimatedAvatarWidget()
+        self.avatar_widget.setFixedSize(200, 200)
+        card_layout.addWidget(self.avatar_widget, alignment=Qt.AlignmentFlag.AlignCenter)
         
         # Status dot
         status_layout = QHBoxLayout()
@@ -184,15 +143,29 @@ class GreetingOverlay(QWidget):
         display_text = greeting_text[:100] + "..." if len(greeting_text) > 100 else greeting_text
         self.subtitle_label.setText(display_text)
         
-        # Speak in background thread
+        # Speak greeting in background thread
         def _speak():
             try:
+                # Activate mouth animation
+                from PyQt6.QtCore import QMetaObject, Qt
+                QMetaObject.invokeMethod(
+                    self.avatar_widget.avatar, "set_speaking",
+                    Qt.ConnectionType.QueuedConnection,
+                    True
+                )
+                
                 file_path = text_to_speech(greeting_text)
                 if file_path:
-                    # Small delay for fade-in
                     import time
                     time.sleep(0.8)
                     play_audio(file_path)
+                
+                # Stop mouth animation
+                QMetaObject.invokeMethod(
+                    self.avatar_widget.avatar, "set_speaking",
+                    Qt.ConnectionType.QueuedConnection,
+                    False
+                )
             except Exception as e:
                 logger.warning(f"Greeting speech failed: {e}")
         
@@ -200,6 +173,12 @@ class GreetingOverlay(QWidget):
         
         # Auto-close after greeting
         QTimer.singleShot(7000, self.close)
+    
+    def closeEvent(self, event):
+        """Stop avatar animation when closing."""
+        if hasattr(self, 'avatar_widget') and hasattr(self.avatar_widget, 'avatar'):
+            self.avatar_widget.avatar.set_speaking(False)
+        super().closeEvent(event)
     
     def paintEvent(self, event):
         """Draw dark overlay behind card."""
