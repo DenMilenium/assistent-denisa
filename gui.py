@@ -22,6 +22,8 @@ from dialogs import ScheduleItemDialog, SettingsDialog
 from reminder_engine import ReminderEngine
 from goals import load_all_goals, get_today_schedule, get_urgent_tasks
 from sync_goals import auto_sync
+from focus_timer import FocusTimer, FocusMode
+from productivity_analytics import analyze_performance, get_motivation, get_ai_recommendation, get_day_status
 from theme import TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY, TEXT_QUATERNARY
 from theme import BG_PRIMARY, BG_PANEL, BG_SURFACE, BG_SECONDARY
 from theme import BRAND_ACCENT, BRAND_GREEN, BRAND_RED, BRAND_ORANGE
@@ -404,6 +406,10 @@ class MainWindow(QMainWindow):
         self.stats_widget = StatsWidget()
         self.tabs.addTab(self.stats_widget, "📊 Статистика")
 
+        # Tab 4: Focus
+        self.focus_widget = FocusWidget()
+        self.tabs.addTab(self.focus_widget, "🎯 Фокус")
+        
         layout.addWidget(self.tabs)
 
     def setup_schedule_tab(self, layout):
@@ -491,6 +497,10 @@ class MainWindow(QMainWindow):
         stats_action = QAction("📊 Статистика", self)
         stats_action.triggered.connect(lambda: self.show_and_tab(2))
         tray_menu.addAction(stats_action)
+
+        focus_action = QAction("🎯 Фокус", self)
+        focus_action.triggered.connect(lambda: self.show_and_tab(3))
+        tray_menu.addAction(focus_action)
 
         settings_action = QAction("Настройки", self)
         settings_action.triggered.connect(self.open_settings)
@@ -696,6 +706,196 @@ class MainWindow(QMainWindow):
                 title, message,
                 QSystemTrayIcon.MessageIcon.Information, 10000
             )
+
+
+class FocusWidget(QWidget):
+    """Pomodoro focus timer + motivation tab."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.focus_timer = FocusTimer()
+        self.focus_timer.tick_signal.connect(self.on_tick)
+        self.focus_timer.complete_signal.connect(self.on_session_complete)
+        self.focus_timer.state_signal.connect(self.on_state_change)
+        self.setup_ui()
+    
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setSpacing(20)
+        
+        # Timer display
+        timer_group = QGroupBox("⏱️ Таймер фокуса")
+        timer_group.setStyleSheet(f"""
+            QGroupBox {{ color: {TEXT_SECONDARY}; font-size: 14px; font-weight: 500;
+            border: 1px solid {BORDER_STANDARD}; border-radius: 12px; margin-top: 8px; padding: 20px; }}
+        """)
+        timer_layout = QVBoxLayout(timer_group)
+        timer_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        timer_layout.setSpacing(15)
+        
+        self.timer_label = QLabel("25:00")
+        self.timer_label.setStyleSheet(f"""
+            font-size: 72px; font-weight: 200; color: {TEXT_PRIMARY};
+            letter-spacing: 2px; font-family: 'Consolas', 'Courier New', monospace;
+        """)
+        self.timer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        timer_layout.addWidget(self.timer_label)
+        
+        self.state_label = QLabel("Готов к работе 🚀")
+        self.state_label.setStyleSheet(f"font-size: 16px; color: {TEXT_TERTIARY};")
+        self.state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        timer_layout.addWidget(self.state_label)
+        
+        # Session info
+        self.session_label = QLabel("Сегодня: 0 сессий • 0 минут фокуса")
+        self.session_label.setStyleSheet(f"font-size: 13px; color: {TEXT_QUATERNARY};")
+        self.session_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        timer_layout.addWidget(self.session_label)
+        
+        layout.addWidget(timer_group)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        btn_layout.setSpacing(15)
+        
+        self.start_btn = QPushButton("▶️ Старт")
+        self.start_btn.setStyleSheet("""
+            QPushButton { background-color: #10B981; color: white; border: none;
+            border-radius: 10px; padding: 14px 40px; font-size: 16px; font-weight: 600; }
+            QPushButton:hover { background-color: #34D399; }
+        """)
+        self.start_btn.clicked.connect(self.toggle_focus)
+        self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_layout.addWidget(self.start_btn)
+        
+        self.pause_btn = QPushButton("⏸️ Пауза")
+        self.pause_btn.setStyleSheet("""
+            QPushButton { background-color: rgba(255,255,255,0.05); color: #D0D6E0;
+            border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px 30px; font-size: 14px; }
+            QPushButton:hover { background-color: rgba(255,255,255,0.1); }
+        """)
+        self.pause_btn.clicked.connect(self.toggle_pause)
+        self.pause_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.pause_btn.setEnabled(False)
+        btn_layout.addWidget(self.pause_btn)
+        
+        layout.addLayout(btn_layout)
+        
+        # Motivation
+        mot_group = QGroupBox("💪 Мотивация")
+        mot_group.setStyleSheet(f"""
+            QGroupBox {{ color: {TEXT_SECONDARY}; font-size: 14px; font-weight: 500;
+            border: 1px solid {BORDER_STANDARD}; border-radius: 12px; margin-top: 8px; padding: 16px; }}
+        """)
+        mot_layout = QVBoxLayout(mot_group)
+        self.motivation_text = QLabel("Выполни первую задачу, чтобы получить мотивацию! 🔥")
+        self.motivation_text.setStyleSheet(f"font-size: 15px; color: {TEXT_TERTIARY}; line-height: 1.5;")
+        self.motivation_text.setWordWrap(True)
+        self.motivation_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        mot_layout.addWidget(self.motivation_text)
+        
+        self.streak_label = QLabel("")
+        self.streak_label.setStyleSheet(f"font-size: 13px; color: {TEXT_QUATERNARY};")
+        self.streak_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        mot_layout.addWidget(self.streak_label)
+        layout.addWidget(mot_group)
+        
+        # Recommendation
+        rec_group = QGroupBox("🤖 AI-рекомендация")
+        rec_group.setStyleSheet(f"""
+            QGroupBox {{ color: {TEXT_SECONDARY}; font-size: 14px; font-weight: 500;
+            border: 1px solid {BORDER_STANDARD}; border-radius: 12px; margin-top: 8px; padding: 16px; }}
+        """)
+        rec_layout = QVBoxLayout(rec_group)
+        self.rec_text = QLabel("Анализирую твою продуктивность...")
+        self.rec_text.setStyleSheet(f"font-size: 14px; color: {TEXT_TERTIARY}; line-height: 1.6;")
+        self.rec_text.setWordWrap(True)
+        rec_layout.addWidget(self.rec_text)
+        layout.addWidget(rec_group)
+        
+        layout.addStretch()
+        
+        # Initial load
+        self.refresh_motivation()
+    
+    def toggle_focus(self):
+        if self.focus_timer.current_mode == FocusMode.FOCUS and self.focus_timer.seconds_left > 0:
+            self.focus_timer.stop()
+            self.start_btn.setText("▶️ Старт")
+            self.state_label.setText("Готов к работе 🚀")
+            self.pause_btn.setEnabled(False)
+            self.timer_label.setText("25:00")
+        else:
+            self.focus_timer.start_focus()
+            self.start_btn.setText("⏹️ Стоп")
+            self.pause_btn.setEnabled(True)
+            self.state_label.setText("🧘 Фокусируемся...")
+    
+    def toggle_pause(self):
+        if self.focus_timer._paused:
+            self.focus_timer.resume()
+            self.pause_btn.setText("⏸️ Пауза")
+            self.state_label.setText("🧘 Фокусируемся...")
+        else:
+            self.focus_timer.pause()
+            self.pause_btn.setText("▶️ Продолжить")
+            self.state_label.setText("⏸️ На паузе")
+    
+    def on_tick(self, seconds: int, state: str):
+        mins = seconds // 60
+        secs = seconds % 60
+        self.timer_label.setText(f"{mins:02d}:{secs:02d}")
+    
+    def on_state_change(self, state: str):
+        if state == FocusMode.FOCUS:
+            self.state_label.setText("🧘 Фокус! Не отвлекайся!")
+        elif state == FocusMode.SHORT_BREAK:
+            self.state_label.setText("☕ Короткий перерыв 5 мин")
+        elif state == FocusMode.LONG_BREAK:
+            self.state_label.setText("🌴 Длинный перерыв 15 мин")
+    
+    def on_session_complete(self, state: str):
+        stats = self.focus_timer.get_stats()
+        self.session_label.setText(f"Сегодня: {stats['today_sessions']} сессий • {stats['total_minutes']} минут фокуса")
+        
+        if state == FocusMode.FOCUS:
+            # Try voice
+            try:
+                from voice_assistant import speak
+                import threading
+                threading.Thread(target=lambda: speak(
+                    "Молодец, Денис! Фокус-сессия завершена. Отдохни немного."
+                ), daemon=True).start()
+            except:
+                pass
+            self.state_label.setText("✅ Фокус завершён! Молодец!")
+            self.refresh_motivation()
+        else:
+            self.state_label.setText("▶️ Перерыв закончен! Снова в бой!")
+    
+    def refresh_motivation(self):
+        try:
+            from productivity_analytics import get_motivation, get_ai_recommendation, analyze_performance, get_day_status
+            
+            # Day status
+            day_status = get_day_status()
+            mot = get_motivation(day_status["done"], day_status["streak"])
+            if mot:
+                self.motivation_text.setText(f"{day_status['emoji']} {mot}")
+                self.streak_label.setText(f"Серия: {day_status['streak']} дней • {day_status['done']}/{day_status['total']} задач ({day_status['percent']}%)")
+            
+            # AI recommendation
+            rec = get_ai_recommendation()
+            self.rec_text.setText(f"💡 {rec}")
+            
+            # Focus stats
+            stats = self.focus_timer.get_stats()
+            self.session_label.setText(f"Сегодня: {stats['today_sessions']} сессий • {stats['total_minutes']} минут фокуса")
+            
+        except Exception as e:
+            logger.warning(f"Motivation refresh failed: {e}")
 
 
 def main():
