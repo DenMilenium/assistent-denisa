@@ -17,31 +17,34 @@ from PyQt6.QtCore import QTimer
 
 def start_bot_thread():
     """Start Telegram bot in background thread when token is set."""
-    import threading
-    from telegram_bot import start_bot
-    thread = threading.Thread(target=start_bot, daemon=True)
-    thread.start()
+    token = database.get_setting("telegram_token")
+    if not token:
+        return
+    try:
+        import threading as _t
+        from telegram_bot import start_bot as _start_bot
+        _t.Thread(target=_start_bot, daemon=True).start()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Bot start failed: {e}")
 
 
 def delayed_greeting(window):
-    """Show greeting overlay and start bot."""
-    # Start Telegram bot
-    token = database.get_setting("telegram_token")
-    if token:
-        start_bot_thread()
-    
     # Show greeting
     manager = GreetingManager(window)
-    manager.show_greeting()
+    overlay = manager.show_greeting()
+    
+    # Start Telegram bot after greeting
+    QTimer.singleShot(2000, start_bot_thread)
 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setApplicationName("Assistent denisa")
     
-    # Apply dark theme
-    from theme import apply_theme
-    apply_theme(app)
+    # Apply NEON FUTURE theme
+    from neon_theme import apply_neon_theme
+    apply_neon_theme(app)
     
     from gui import MainWindow
     window = MainWindow()
