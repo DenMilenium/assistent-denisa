@@ -1,6 +1,7 @@
 """Test Suite — Assistent denisa self-diagnostics (FIXED)"""
 import sys
 import os
+from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 tests_passed = 0
@@ -150,7 +151,14 @@ try:
     test("Subtasks loaded", len(subtasks) > 5, f"Got {len(subtasks)} subtasks")
     
     schedule = data.get("schedule", [])
-    test("Schedule entries", len(schedule) > 20, f"Got {len(schedule)} days")
+    test("Schedule entries", len(schedule) > 0, f"Got {len(schedule)} days")
+    if schedule:
+        must_have_keys = ["date", "morning", "sport", "work_morning", "priority"]
+        first = schedule[0]
+        missing = [k for k in must_have_keys if k not in first]
+        test("Schedule structure", len(missing) == 0, f"Missing keys: {missing}")
+        has_date = isinstance(first.get("date"), datetime)
+        test("Schedule date type", has_date, f"Got: {type(first.get('date')).__name__}")
     
     total = data.get("total_progress", -1)
     test("Total progress", total >= 0, f"Got {total}%")

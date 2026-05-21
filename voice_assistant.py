@@ -30,26 +30,43 @@ def _init_player():
     global PLAY_METHOD
     
     # Method 1: winsound (built-in Windows, plays WAV)
-    # BUT winsound doesn't play MP3. We pair it with PowerShell conversion.
     try:
         import winsound
+        # Verify winsound actually works with a silent test
+        winsound.PlaySound(None, winsound.SND_PURGE)
         PLAY_METHOD = "winsound"
         logger.info("Audio: using winsound (built-in) + PowerShell conversion")
         return
-    except ImportError:
+    except Exception:
         pass
     
     # Method 2: PowerShell media playback (always works on Windows 10+)
+    import subprocess as _sp
+    for ps_cmd in ["powershell.exe", "powershell"]:
+        try:
+            r = _sp.run(
+                [ps_cmd, "-NoProfile", "-Command",
+                 "try { $null = New-Object System.Media.SoundPlayer; Write-Output 'ok' } catch { Write-Error $_ }"],
+                capture_output=True, timeout=3, text=True
+            )
+            if r.returncode == 0 and 'ok' in r.stdout:
+                PLAY_METHOD = "powershell"
+                logger.info(f"Audio: using PowerShell SoundPlayer (via {ps_cmd})")
+                return
+        except Exception:
+            continue
+    
+    # Method 3: os.startfile (always available on Windows)
     try:
-        import subprocess
-        result = subprocess.run(
-            ["powershell", "-Command", "(New-Object Media.SoundPlayer).PlaySync()"],
-            capture_output=True, timeout=2
-        )
-        PLAY_METHOD = "powershell"
-        logger.info("Audio: using PowerShell SoundPlayer")
-        return
-    except:
+        import platform
+        if platform.system() == "Windows":
+            import os
+            # Just verify we can reach shell
+            _sp.run(["cmd", "/c", "ver"], capture_output=True, timeout=2, check=True)
+            PLAY_METHOD = "os_default"
+            logger.info("Audio: using os.startfile (system default)")
+            return
+    except Exception:
         pass
     
     PLAY_METHOD = None
