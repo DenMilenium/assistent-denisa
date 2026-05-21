@@ -194,31 +194,74 @@ def record_from_mic(duration: int = 5, sample_rate: int = 16000) -> str:
         logger.warning("SpeechRecognition not installed — cannot record from mic")
         return None
     
+    # Check if we can record (sounddevice or pyaudio)
+    use_sounddevice = False
+    try:
+        import sounddevice
+        use_sounddevice = True
+        logger.info("Using sounddevice for microphone capture")
+    except ImportError:
+        try:
+            import pyaudio
+        except ImportError:
+            logger.warning("Neither PyAudio nor sounddevice installed. Install with: pip install sounddevice")
+            return None
+    
     try:
         import speech_recognition as sr
         import tempfile
         import wave
         
         r = sr.Recognizer()
-        with sr.Microphone(sample_rate=sample_rate) as source:
-            logger.info("Recording from microphone...")
-            r.adjust_for_ambient_noise(source, duration=0.3)
-            audio = r.listen(source, timeout=duration, phrase_time_limit=duration)
         
-        # Save to temporary WAV
-        tmp = tempfile.NamedTemporaryFile(suffix="_mic.wav", delete=False)
-        tmp_path = tmp.name
-        tmp.close()
-        
-        wav_data = audio.get_wav_data()
-        with wave.open(tmp_path, 'wb') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)  # 16-bit
-            wf.setframerate(sample_rate)
-            wf.writeframes(wav_data)
-        
-        logger.info(f"Microphone recording saved: {tmp_path}")
-        return tmp_path
+        if use_sounddevice:
+            # Use sounddevice directly (works without PyAudio)
+            import sounddevice as sd
+            import numpy as np
+            
+            logger.info(f"Recording {duration}s from microphone (sounddevice)...")
+            recording = sd.rec(
+                int(duration * sample_rate),
+                samplerate=sample_rate,
+                channels=1,
+                dtype='int16'
+            )
+            sd.wait()
+            
+            # Save to temporary WAV
+            tmp = tempfile.NamedTemporaryFile(suffix="_mic.wav", delete=False)
+            tmp_path = tmp.name
+            tmp.close()
+            
+            with wave.open(tmp_path, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(sample_rate)
+                wf.writeframes(recording.tobytes())
+            
+            logger.info(f"Recording saved: {tmp_path}")
+            return tmp_path
+        else:
+            # Use PyAudio via speech_recognition
+            with sr.Microphone(sample_rate=sample_rate) as source:
+                logger.info("Recording from microphone...")
+                r.adjust_for_ambient_noise(source, duration=0.3)
+                audio = r.listen(source, timeout=duration, phrase_time_limit=duration)
+            
+            # Save to temporary WAV
+            tmp = tempfile.NamedTemporaryFile(suffix="_mic.wav", delete=False)
+            tmp_path = tmp.name
+            tmp.close()
+            
+            wav_data = audio.get_wav_data()
+            with wave.open(tmp_path, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(sample_rate)
+                wf.writeframes(wav_data)
+            
+            logger.info(f"Recording saved: {tmp_path}")
+            return tmp_path
     except Exception as e:
         logger.error(f"Microphone recording failed: {e}")
         return None
