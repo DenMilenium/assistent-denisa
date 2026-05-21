@@ -143,11 +143,11 @@ class GreetingOverlay(QWidget):
         display_text = greeting_text[:100] + "..." if len(greeting_text) > 100 else greeting_text
         self.subtitle_label.setText(display_text)
         
-        # Speak greeting in background thread
+        # Speak greeting in background thread (GUI-safe via signals)
         def _speak():
             try:
-                # Activate mouth animation via direct call
-                self.avatar_widget.avatar.set_speaking(True)
+                # Signal avatar to speak
+                self.avatar_widget.avatar.set_speaking.emit(True)
                 
                 file_path = text_to_speech(greeting_text)
                 if file_path:
@@ -155,8 +155,8 @@ class GreetingOverlay(QWidget):
                     time.sleep(0.8)
                     play_audio(file_path)
                 
-                # Stop mouth animation
-                self.avatar_widget.avatar.set_speaking(False)
+                # Signal avatar to stop
+                self.avatar_widget.avatar.set_speaking.emit(False)
             except Exception as e:
                 logger.warning(f"Greeting speech failed: {e}")
         

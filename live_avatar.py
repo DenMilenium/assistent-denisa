@@ -57,9 +57,17 @@ class LiveAvatar(QLabel):
     - Color shifts (violet ↔ cyan)
     """
     
+    # Signals for thread-safe control
+    set_speaking = pyqtSignal(bool)
+    set_mood_signal = pyqtSignal(str)
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(200, 200)
+        
+        # Connect signals to slots
+        self.set_speaking.connect(self.on_speaking_changed)
+        self.set_mood_signal.connect(self._on_set_mood)
         
         # Animation state
         self.time = 0.0
@@ -137,7 +145,7 @@ class LiveAvatar(QLabel):
         self.render_frame()
     
     @pyqtSlot(bool)
-    def set_speaking(self, is_speaking: bool):
+    def on_speaking_changed(self, is_speaking: bool):
         if is_speaking:
             self.mood = "speaking"
             self.speech_energy = min(1.0, self.speech_energy + 0.3)
@@ -375,7 +383,7 @@ class AnimatedAvatarWidget(QWidget):
     
     @pyqtSlot(bool)
     def set_speaking(self, is_speaking: bool):
-        self.avatar.set_speaking(is_speaking)
+        self.avatar.set_speaking.emit(is_speaking)
     
     def set_mood(self, mood: str):
         self.avatar.set_mood(mood)
