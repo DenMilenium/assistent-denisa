@@ -388,6 +388,13 @@ class MainWindow(QMainWindow):
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.auto_refresh)
         self.refresh_timer.start(300000)
+        
+        # Таймер для текстового ввода (проверка _input_requested)
+        self._input_requested = False
+        self._input_result = None
+        self._input_check_timer = QTimer()
+        self._input_check_timer.timeout.connect(self._check_input_request)
+        self._input_check_timer.start(200)  # 5 раз в секунду
 
     def setup_ui(self):
         central = QWidget()
@@ -790,6 +797,7 @@ class MainWindow(QMainWindow):
             return
         
         self._voice_active = True
+        self._input_result = None  # для текстового fallback
         self.mic_btn.setEnabled(False)
         self.mic_btn.setText("🎤 Слушаю...")
         self.voice_status.setText("🎙️ Говори команду...")
@@ -811,26 +819,50 @@ class MainWindow(QMainWindow):
             audio_path = record_from_mic(duration=5)
             
             if not audio_path:
-                self._safe_status("❌ Микрофон не работает. Проверь подключение.")
-                self._safe_avatar_stop()
-                return
-            
-            # === ШАГ 2: Распознавание речи ===
-            self._safe_status("🧠 Распознаю речь...")
-            text = None
-            
-            if WHISPER_AVAILABLE:
-                text = transcribe_with_whisper(audio_path)
-            
-            if text is None and SR_AVAILABLE:
-                text = transcribe_with_google(audio_path)
-            
-            # Cleanup temp file
-            try:
-                import os
-                os.remove(audio_path)
-            except:
-                pass
+                # Fallback: если микрофон не работает — текстовый ввод
+                self._safe_status("⌨️ Введи команду...")
+                import time
+                time.sleep(0.3)
+                
+                # Показываем диалог ввода из GUI-потока
+                self._input_requested = True
+                self._input_result = None
+                
+                # Ждём пока пользователь введёт текст (таймаут 60 сек)
+                timeout = 60
+                while timeout > 0 and self._input_result is None:
+                    time.sleep(0.5)
+                    timeout -= 0.5
+                
+                text = self._input_result or ""
+                audio_path = None
+                
+                if not text:
+                    self._safe_status("❌ Команда не введена")
+                    self._safe_avatar_stop()
+                    return
+                
+                text = text.strip().lower()
+                self._safe_transcript(text)
+                logger.info(f"Text input: '{text}'")
+                self._safe_status(f"✏️ {text[:50]}...")
+            else:
+                # === ШАГ 2: Распознавание речи ===
+                self._safe_status("🧠 Распознаю речь...")
+                text = None
+                
+                if WHISPER_AVAILABLE:
+                    text = transcribe_with_whisper(audio_path)
+                
+                if text is None and SR_AVAILABLE:
+                    text = transcribe_with_google(audio_path)
+                
+                # Cleanup temp file
+                try:
+                    import os
+                    os.remove(audio_path)
+                except:
+                    pass
             
             if not text:
                 self._safe_status("🤷 Не расслышал. Попробуй ещё раз.")
@@ -972,6 +1004,22 @@ class MainWindow(QMainWindow):
             )
         except RuntimeError:
             pass
+    
+    def _check_input_request(self):
+        """Проверяет, нужно ли показать диалог текстового ввода."""
+        if self._input_requested:
+            self._input_requested = False
+            from PyQt6.QtWidgets import QInputDialog
+            dialog = QInputDialog(self)
+            dialog.setWindowTitle("Голосовой ассистент")
+            dialog.setLabelText("Введи команду:")
+            dialog.setTextValue("")
+            dialog.setInputMode(QInputDialog.InputMode.TextInput)
+            dialog.resize(400, 120)
+            if dialog.exec():
+                self._input_result = dialog.textValue()
+            else:
+                self._input_result = ""
 
 
 class FocusWidget(QWidget):
