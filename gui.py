@@ -30,6 +30,7 @@ from theme import BRAND_ACCENT, BRAND_GREEN, BRAND_RED, BRAND_ORANGE
 from theme import BORDER_SUBTLE, BORDER_STANDARD, BORDER_SOLID
 from theme import FONT_SIZE_SM, FONT_SIZE_MD, FONT_SIZE_LG, FONT_SIZE_XL
 from theme import SPACING_SM, SPACING_MD, SPACING_LG, SPACING_XL
+from neon_theme import TEXT_NEON_CYAN, TEXT_NEON_WHITE, TEXT_MUTED
 
 logging.basicConfig(
     level=logging.INFO,
@@ -189,29 +190,25 @@ class GoalsWidget(QWidget):
 
         # Top: total progress
         progress_layout = QHBoxLayout()
-        total_label = QLabel("Общий прогресс:")
-        total_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 14px; font-weight: 500;")
+        total_label = QLabel("⚡ ПРОГРЕСС")
+        total_label.setStyleSheet(f"color: {TEXT_NEON_CYAN}; font-size: 12px; font-weight: 600; letter-spacing: 2px;")
         progress_layout.addWidget(total_label)
         self.total_progress_bar = QProgressBar()
         self.total_progress_bar.setRange(0, 100)
         self.total_progress_bar.setTextVisible(True)
         self.total_progress_bar.setStyleSheet(f"""
-            QProgressBar {{ border: 1px solid {BORDER_SUBTLE}; border-radius: 6px;
-            text-align: center; height: 28px; background-color: rgba(255,255,255,0.03);
-            color: {TEXT_PRIMARY}; font-size: 13px; font-weight: 600; }}
+            QProgressBar {{ border: 1px solid rgba(0, 245, 255, 0.15); border-radius: 6px;
+            text-align: center; height: 28px; background-color: rgba(0, 245, 255, 0.03);
+            color: {TEXT_NEON_WHITE}; font-size: 12px; font-weight: 600; font-family: {FONT_MONO}; }}
             QProgressBar::chunk {{ background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 #5E6AD2, stop:1 #7170FF); border-radius: 5px; }}
+                stop:0 #5B3AFF, stop:0.5 #7B4CFF, stop:1 #00F5FF); border-radius: 5px; }}
         """)
         progress_layout.addWidget(self.total_progress_bar)
-        self.refresh_btn = QPushButton("🔄")
+        self.refresh_btn = QPushButton("⟳")
+        self.refresh_btn.setObjectName("success")
         self.refresh_btn.setToolTip("Обновить данные из Excel")
-        self.refresh_btn.setFixedWidth(36)
+        self.refresh_btn.setFixedWidth(40)
         self.refresh_btn.setFixedHeight(28)
-        self.refresh_btn.setStyleSheet("""
-            QPushButton { background-color: rgba(255,255,255,0.05); color: #D0D6E0;
-            border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; font-size: 14px; }
-            QPushButton:hover { background-color: rgba(255,255,255,0.1); }
-        """)
         self.refresh_btn.clicked.connect(self.load_data)
         progress_layout.addWidget(self.refresh_btn)
         layout.addLayout(progress_layout)
@@ -415,22 +412,15 @@ class MainWindow(QMainWindow):
     def setup_schedule_tab(self, layout):
         # Top bar
         top_layout = QHBoxLayout()
-        sync_btn = QPushButton("🔄 Синхр. с целями")
+        
+        sync_btn = QPushButton("⟳ Синхр. с целями")
+        sync_btn.setObjectName("success")
         sync_btn.setToolTip("Обновить расписание из файла целей")
-        sync_btn.setStyleSheet("""
-            QPushButton { background-color: rgba(16, 185, 129, 0.1); color: #10B981; 
-            border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 6px; padding: 7px 14px; font-size: 13px; }
-            QPushButton:hover { background-color: rgba(16, 185, 129, 0.2); }
-        """)
         sync_btn.clicked.connect(self.resync_goals)
         top_layout.addWidget(sync_btn)
 
-        settings_btn = QPushButton("⚙️ Telegram")
-        settings_btn.setStyleSheet("""
-            QPushButton { background-color: rgba(113, 112, 255, 0.1); color: #7170FF; 
-            border: 1px solid rgba(113, 112, 255, 0.2); border-radius: 6px; padding: 7px 14px; font-size: 13px; }
-            QPushButton:hover { background-color: rgba(113, 112, 255, 0.2); }
-        """)
+        settings_btn = QPushButton("⚡ Telegram")
+        settings_btn.setObjectName("primary")
         settings_btn.clicked.connect(self.open_settings)
         top_layout.addWidget(settings_btn)
         top_layout.addStretch()
@@ -439,7 +429,7 @@ class MainWindow(QMainWindow):
         # Table
         self.table = QTableWidget()
         self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["✓", "Время", "Задача", "Дни", "Активно"])
+        self.table.setHorizontalHeaderLabels(["✓", "⏰", "💬 Задача", "📅 Дни", "⚡"])
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -449,30 +439,21 @@ class MainWindow(QMainWindow):
 
         # Bottom buttons
         btn_layout = QHBoxLayout()
-        add_btn = QPushButton("➕ Добавить")
-        add_btn.setStyleSheet("""
-            QPushButton { background-color: #5E6AD2; color: white; border: none;
-            border-radius: 6px; padding: 9px 18px; font-size: 13px; font-weight: 500; }
-            QPushButton:hover { background-color: #828FFF; }
-        """)
+        
+        add_btn = QPushButton("✦ Добавить")
+        add_btn.setObjectName("primary")
         add_btn.clicked.connect(self.add_item)
-        edit_btn = QPushButton("✏️ Редактировать")
-        edit_btn.setStyleSheet("""
-            QPushButton { background-color: rgba(255,255,255,0.05); color: #D0D6E0;
-            border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 9px 18px; font-size: 13px; }
-            QPushButton:hover { background-color: rgba(255,255,255,0.1); color: #F7F8F8; }
-        """)
-        edit_btn.clicked.connect(self.edit_item)
-        delete_btn = QPushButton("🗑️ Удалить")
-        delete_btn.setStyleSheet("""
-            QPushButton { background-color: rgba(239, 68, 68, 0.1); color: #EF4444;
-            border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 6px; padding: 9px 18px; font-size: 13px; }
-            QPushButton:hover { background-color: rgba(239, 68, 68, 0.2); }
-        """)
-        delete_btn.clicked.connect(self.delete_item)
         btn_layout.addWidget(add_btn)
+        
+        edit_btn = QPushButton("✎ Правка")
+        edit_btn.clicked.connect(self.edit_item)
         btn_layout.addWidget(edit_btn)
+        
+        delete_btn = QPushButton("✕ Удалить")
+        delete_btn.setObjectName("danger")
+        delete_btn.clicked.connect(self.delete_item)
         btn_layout.addWidget(delete_btn)
+        
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
@@ -761,11 +742,7 @@ class FocusWidget(QWidget):
         btn_layout.setSpacing(15)
         
         self.start_btn = QPushButton("▶️ Старт")
-        self.start_btn.setStyleSheet("""
-            QPushButton { background-color: #10B981; color: white; border: none;
-            border-radius: 10px; padding: 14px 40px; font-size: 16px; font-weight: 600; }
-            QPushButton:hover { background-color: #34D399; }
-        """)
+        self.start_btn.setObjectName("primary")
         self.start_btn.clicked.connect(self.toggle_focus)
         self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_layout.addWidget(self.start_btn)
@@ -902,9 +879,9 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Assistent denisa")
     
-    # Apply dark theme
-    from theme import apply_theme
-    apply_theme(app)
+    # Apply NEON FUTURE theme
+    from neon_theme import apply_neon_theme
+    apply_neon_theme(app)
     
     window = MainWindow()
     window.show()
