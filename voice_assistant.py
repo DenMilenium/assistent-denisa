@@ -29,39 +29,46 @@ PLAY_METHOD = None
 def _init_player():
     global PLAY_METHOD
     
-    # Method 1: winsound (built-in Windows, plays WAV)
-    try:
-        import winsound
-        # Simple test — try to get available devices
-        _ = winsound.SND_FILENAME
-        PLAY_METHOD = "winsound"
-        logger.info("Audio: using winsound (built-in) + PowerShell conversion")
-        return
-    except Exception:
-        pass
-    
-    # Method 2: PowerShell media playback (always works on Windows 10+)
+    # Method 1: PowerShell Media Player (plays MP3 natively on Windows 10+)
     import subprocess as _sp
     for ps_cmd in ["powershell.exe", "powershell"]:
         try:
             r = _sp.run(
                 [ps_cmd, "-NoProfile", "-Command",
-                 "try { $null = New-Object System.Media.SoundPlayer; Write-Output 'ok' } catch { Write-Error $_ }"],
+                 "try { Add-Type -AssemblyName System.Windows.Forms; $p=New-Object System.Media.SoundPlayer; Write-Output 'ok' } catch { Write-Error $_ }"],
                 capture_output=True, timeout=3, text=True
             )
             if r.returncode == 0 and 'ok' in r.stdout:
                 PLAY_METHOD = "powershell"
-                logger.info(f"Audio: using PowerShell SoundPlayer (via {ps_cmd})")
+                logger.info(f"Audio: using PowerShell MediaPlayer (via {ps_cmd})")
                 return
         except Exception:
             continue
     
-    # Method 3: os.startfile (always available on Windows)
+    # Method 2: ffplay (FFmpeg, plays anything)
+    try:
+        r = _sp.run(["ffplay", "-version"], capture_output=True, timeout=3)
+        if r.returncode == 0:
+            PLAY_METHOD = "ffplay"
+            logger.info("Audio: using ffplay (FFmpeg)")
+            return
+    except Exception:
+        pass
+    
+    # Method 3: winsound (built-in, WAV only — will convert MP3→WAV)
+    try:
+        import winsound
+        _ = winsound.SND_FILENAME
+        PLAY_METHOD = "winsound"
+        logger.info("Audio: using winsound (WAV via PowerShell conversion)")
+        return
+    except Exception:
+        pass
+    
+    # Method 4: os.startfile (system default app)
     try:
         import platform
         if platform.system() == "Windows":
-            import os
-            # Just verify we can reach shell
             _sp.run(["cmd", "/c", "ver"], capture_output=True, timeout=2, check=True)
             PLAY_METHOD = "os_default"
             logger.info("Audio: using os.startfile (system default)")
@@ -162,6 +169,10 @@ def play_audio_impl(file_path: str):
     
     elif PLAY_METHOD == "ffplay":
         play_with_ffplay(file_path)
+    
+    elif PLAY_METHOD == "winsound":
+        # winsound plays WAV only. Convert MP3→WAV first
+        convert_and_play(file_path)
     
     else:
         # Last resort: try system default
