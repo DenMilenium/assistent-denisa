@@ -10,7 +10,9 @@ from voice_commands import (
     ACTION_ADD_TASK, ACTION_ADD_SCHEDULE, ACTION_DELETE_TASK,
     ACTION_LIST_TASKS, ACTION_ADD_GOAL, ACTION_GOAL_PROGRESS,
     ACTION_LIST_GOALS, ACTION_QUERY, ACTION_HELP, ACTION_UNKNOWN,
+    ACTION_COMPLETE, ACTION_THANKS, ACTION_GOODBYE,
     format_tasks_response, format_goals_response, get_greeting,
+    get_help_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,12 @@ def process_command(command: dict) -> dict:
     if action == ACTION_HELP:
         return _handle_help()
     
+    elif action == ACTION_THANKS:
+        return _handle_thanks()
+    
+    elif action == ACTION_GOODBYE:
+        return _handle_goodbye()
+    
     elif action == ACTION_QUERY:
         return _handle_query(params)
     
@@ -59,6 +67,9 @@ def process_command(command: dict) -> dict:
     elif action == ACTION_GOAL_PROGRESS:
         return _handle_goal_progress(params)
     
+    elif action == ACTION_COMPLETE:
+        return _handle_complete(params)
+    
     elif action == ACTION_LIST_GOALS:
         return _handle_list_goals(params)
     
@@ -70,16 +81,30 @@ def process_command(command: dict) -> dict:
 
 
 def _handle_help() -> dict:
-    text = (
-        "Я умею:\n"
-        "📅 Задачи — 'добавь встречу в пятницу в 15:00'\n"
-        "📋 Список — 'что у меня на сегодня?'\n"
-        "🗑️ Удалить — 'удали задачу купить молоко'\n"
-        "🎯 Цели — 'добавь цель выучить Python'\n"
-        "📊 Прогресс — 'отметь прогресс по книге 50%'\n"
-        "📞 Напоминания — 'напомни позвонить в 18:00'"
+    return {"text": get_help_text(), "success": True}
+
+
+def _handle_thanks() -> dict:
+    phrase = (
+        "Всегда пожалуйста, Денис! 😊\n"
+        "Обращайся в любое время — я здесь, чтобы помочь."
     )
-    return {"text": text, "success": True}
+    return {"text": phrase, "success": True}
+
+
+def _handle_goodbye() -> dict:
+    hour = datetime.now().hour
+    if hour < 6 or hour > 22:
+        phrase = "Спокойной ночи, Денис! Сладких снов 🌙"
+    elif hour < 12:
+        phrase = "Хорошего дня, Денис! Буду ждать твоих команд ☀️"
+    else:
+        phrase = "Пока, Денис! Если что — я здесь 😊"
+    return {"text": phrase, "success": True}
+
+
+def _handle_help() -> dict:
+    return {"text": get_help_text(), "success": True}
 
 
 def _handle_query(params: dict) -> dict:
@@ -219,3 +244,27 @@ def _handle_list_goals(params: dict) -> dict:
     data = load_all_goals()
     goals = data.get("goals", [])
     return {"text": format_goals_response(goals), "success": True}
+
+
+def _handle_complete(params: dict) -> dict:
+    """Mark a task as completed."""
+    task_text = params.get("text", "").lower()
+    
+    if not task_text:
+        # Mark most recent task
+        items = database.get_all_items()
+        today = datetime.now().weekday()
+        for item in reversed(items):
+            if item["enabled"]:
+                from datetime import date
+                database.mark_completed(item["id"])
+                return {"text": f"✅ Отметил задачу «{item['text']}» как выполненную!", "success": True}
+        return {"text": "Нет активных задач для отметки.", "success": True}
+    
+    items = database.get_all_items()
+    for item in items:
+        if task_text in item["text"].lower():
+            database.mark_completed(item["id"])
+            return {"text": f"✅ Отметил задачу «{item['text']}» как выполненную!", "success": True}
+    
+    return {"text": f"Не нашёл задачу «{task_text}».", "success": False}
