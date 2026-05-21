@@ -3,7 +3,7 @@ name: Build Windows EXE
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:  # можно запустить вручную
+  workflow_dispatch:
 
 jobs:
   build:
@@ -26,9 +26,9 @@ jobs:
 
     - name: Build EXE
       run: |
-        pyinstaller --noconsole --onefile --icon=app_icon.ico --name "Assistent denisa" main.py
+        pyinstaller --noconsole --onefile --icon=app_icon.ico --name "Assistent denisa" --add-data "app_icon.ico;." --hidden-import openpyxl main.py
 
-    - name: Upload EXE as artifact
+    - name: Upload EXE
       uses: actions/upload-artifact@v4
       with:
         name: Assistent-denisa
