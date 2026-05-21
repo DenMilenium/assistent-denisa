@@ -779,6 +779,200 @@ class MainWindow(QMainWindow):
                 QSystemTrayIcon.MessageIcon.Information, 10000
             )
 
+    # ============================================================
+    # ГОЛОСОВОЙ АССИСТЕНТ — запись → STT → NLU → действие → TTS
+    # ============================================================
+    
+    def on_mic_click(self):
+        """Обработчик кнопки микрофона — запуск голосового ввода."""
+        if hasattr(self, '_voice_active') and self._voice_active:
+            self.voice_status.setText("Уже слушаю... Подожди")
+            return
+        
+        self._voice_active = True
+        self.mic_btn.setEnabled(False)
+        self.mic_btn.setText("🎤 Слушаю...")
+        self.voice_status.setText("🎙️ Говори команду...")
+        self.transcript_label.hide()
+        
+        self.avatar_widget.set_mood("thinking")
+        
+        import threading
+        thread = threading.Thread(target=self._voice_loop, daemon=True)
+        thread.start()
+    
+    def _voice_loop(self):
+        """Полный пайплайн: запись → распознавание → понимание → действие → ответ."""
+        import time
+        
+        try:
+            # === ШАГ 1: Запись с микрофона ===
+            self._safe_status("🎙️ Слушаю...")
+            audio_path = record_from_mic(duration=5)
+            
+            if not audio_path:
+                self._safe_status("❌ Микрофон не работает. Проверь подключение.")
+                self._safe_avatar_stop()
+                return
+            
+            # === ШАГ 2: Распознавание речи ===
+            self._safe_status("🧠 Распознаю речь...")
+            text = None
+            
+            if WHISPER_AVAILABLE:
+                text = transcribe_with_whisper(audio_path)
+            
+            if text is None and SR_AVAILABLE:
+                text = transcribe_with_google(audio_path)
+            
+            # Cleanup temp file
+            try:
+                import os
+                os.remove(audio_path)
+            except:
+                pass
+            
+            if not text:
+                self._safe_status("🤷 Не расслышал. Попробуй ещё раз.")
+                self._safe_avatar_stop()
+                return
+            
+            text = text.strip().lower()
+            logger.info(f"STT result: '{text}'")
+            
+            # Показываем распознанный текст
+            self._safe_transcript(text)
+            
+            # === ШАГ 3: NLU — понимание команды ===
+            self._safe_status("🤔 Анализирую команду...")
+            command = parse_command(text)
+            
+            action = command.get("action", "unknown")
+            confidence = command.get("confidence", 0)
+            logger.info(f"NLU: action={action}, confidence={confidence}")
+            
+            if confidence < 0.2:
+                self._safe_status(f"❓ Не понял команду: \"{text[:50]}\"")
+                self._safe_speak("Извини, я не понял команду. Попробуй сказать по-другому.")
+                self._safe_avatar_stop()
+                return
+            
+            # === ШАГ 4: Выполнение действия ===
+            self._safe_status(f"⚡ Выполняю: {action}")
+            response = process_command(command)
+            
+            result_text = response.get("text", "Готово!")
+            success = response.get("success", True)
+            
+            # === ШАГ 5: TTS ответ ===
+            if success:
+                self._safe_speak(result_text)
+                self._safe_status(f"✅ {result_text[:60]}")
+                
+                # Аватар улыбается
+                self._safe_avatar_mood("happy")
+            else:
+                self._safe_speak(f"Не получилось: {result_text[:80]}")
+                self._safe_status(f"❌ {result_text[:60]}")
+            
+            # === ШАГ 6: Обновление GUI ===
+            self._safe_refresh()
+            
+            # Отключаем анимацию рта через 2 секунды
+            time.sleep(2)
+            
+        except Exception as e:
+            logger.error(f"Voice loop error: {e}")
+            self._safe_status(f"⚠️ Ошибка: {str(e)[:50]}")
+        finally:
+            self._voice_active = False
+            self._safe_mic_reset()
+            self._safe_avatar_stop()
+    
+    # ---- Thread-safe helpers ----
+    
+    def _safe_status(self, text: str):
+        """Thread-safe обновление статуса голоса."""
+        from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
+        try:
+            QMetaObject.invokeMethod(
+                self.voice_status, "setText",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, text)
+            )
+        except RuntimeError:
+            pass  # C++ object deleted
+    
+    def _safe_transcript(self, text: str):
+        """Thread-safe показ распознанного текста."""
+        from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
+        try:
+            QMetaObject.invokeMethod(
+                self.transcript_label, "setText",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, f'"{text}"')
+            )
+            QMetaObject.invokeMethod(
+                self.transcript_label, "show",
+                Qt.ConnectionType.QueuedConnection
+            )
+        except RuntimeError:
+            pass
+    
+    def _safe_speak(self, text: str):
+        """Thread-safe TTS в фоновом потоке."""
+        try:
+            # Включаем анимацию рта перед речью
+            self.avatar_widget.avatar.set_speaking.emit(True)
+            speak(text)
+        except Exception as e:
+            logger.warning(f"TTS failed: {e}")
+        finally:
+            self.avatar_widget.avatar.set_speaking.emit(False)
+    
+    def _safe_avatar_stop(self):
+        """Thread-safe остановка анимации рта аватара."""
+        try:
+            self.avatar_widget.avatar.set_speaking.emit(False)
+            self.avatar_widget.set_mood("neutral")
+        except RuntimeError:
+            pass
+    
+    def _safe_avatar_mood(self, mood: str):
+        """Thread-safe смена настроения аватара."""
+        try:
+            self.avatar_widget.set_mood(mood)
+        except RuntimeError:
+            pass
+    
+    def _safe_mic_reset(self):
+        """Thread-safe сброс кнопки микрофона."""
+        from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
+        try:
+            QMetaObject.invokeMethod(
+                self.mic_btn, "setEnabled",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(bool, True)
+            )
+            QMetaObject.invokeMethod(
+                self.mic_btn, "setText",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, "🎤 Говорить")
+            )
+        except RuntimeError:
+            pass
+    
+    def _safe_refresh(self):
+        """Thread-safe обновление таблицы."""
+        from PyQt6.QtCore import QMetaObject, Qt
+        try:
+            QMetaObject.invokeMethod(
+                self, "refresh_table",
+                Qt.ConnectionType.QueuedConnection
+            )
+        except RuntimeError:
+            pass
+
 
 class FocusWidget(QWidget):
     """Pomodoro focus timer + motivation tab."""
@@ -965,199 +1159,6 @@ class FocusWidget(QWidget):
         except Exception as e:
             logger.warning(f"Motivation refresh failed: {e}")
 
-    # ============================================================
-    # ГОЛОСОВОЙ АССИСТЕНТ — запись → STT → NLU → действие → TTS
-    # ============================================================
-    
-    def on_mic_click(self):
-        """Обработчик кнопки микрофона — запуск голосового ввода."""
-        if hasattr(self, '_voice_active') and self._voice_active:
-            self.voice_status.setText("Уже слушаю... Подожди")
-            return
-        
-        self._voice_active = True
-        self.mic_btn.setEnabled(False)
-        self.mic_btn.setText("🎤 Слушаю...")
-        self.voice_status.setText("🎙️ Говори команду...")
-        self.transcript_label.hide()
-        
-        self.avatar_widget.set_mood("thinking")
-        
-        import threading
-        thread = threading.Thread(target=self._voice_loop, daemon=True)
-        thread.start()
-    
-    def _voice_loop(self):
-        """Полный пайплайн: запись → распознавание → понимание → действие → ответ."""
-        import time
-        
-        try:
-            # === ШАГ 1: Запись с микрофона ===
-            self._safe_status("🎙️ Слушаю...")
-            audio_path = record_from_mic(duration=5)
-            
-            if not audio_path:
-                self._safe_status("❌ Микрофон не работает. Проверь подключение.")
-                self._safe_avatar_stop()
-                return
-            
-            # === ШАГ 2: Распознавание речи ===
-            self._safe_status("🧠 Распознаю речь...")
-            text = None
-            
-            if WHISPER_AVAILABLE:
-                text = transcribe_with_whisper(audio_path)
-            
-            if text is None and SR_AVAILABLE:
-                text = transcribe_with_google(audio_path)
-            
-            # Cleanup temp file
-            try:
-                import os
-                os.remove(audio_path)
-            except:
-                pass
-            
-            if not text:
-                self._safe_status("🤷 Не расслышал. Попробуй ещё раз.")
-                self._safe_avatar_stop()
-                return
-            
-            text = text.strip().lower()
-            logger.info(f"STT result: '{text}'")
-            
-            # Показываем распознанный текст
-            self._safe_transcript(text)
-            
-            # === ШАГ 3: NLU — понимание команды ===
-            self._safe_status("🤔 Анализирую команду...")
-            command = parse_command(text)
-            
-            action = command.get("action", "unknown")
-            confidence = command.get("confidence", 0)
-            logger.info(f"NLU: action={action}, confidence={confidence}")
-            
-            if confidence < 0.2:
-                self._safe_status(f"❓ Не понял команду: \"{text[:50]}\"")
-                self._safe_speak("Извини, я не понял команду. Попробуй сказать по-другому.")
-                self._safe_avatar_stop()
-                return
-            
-            # === ШАГ 4: Выполнение действия ===
-            self._safe_status(f"⚡ Выполняю: {action}")
-            response = process_command(command)
-            
-            result_text = response.get("text", "Готово!")
-            success = response.get("success", True)
-            
-            # === ШАГ 5: TTS ответ ===
-            if success:
-                self._safe_speak(result_text)
-                self._safe_status(f"✅ {result_text[:60]}")
-                
-                # Аватар улыбается
-                self._safe_avatar_mood("happy")
-            else:
-                self._safe_speak(f"Не получилось: {result_text[:80]}")
-                self._safe_status(f"❌ {result_text[:60]}")
-            
-            # === ШАГ 6: Обновление GUI ===
-            self._safe_refresh()
-            
-            # Отключаем анимацию рта через 2 секунды
-            time.sleep(2)
-            
-        except Exception as e:
-            logger.error(f"Voice loop error: {e}")
-            self._safe_status(f"⚠️ Ошибка: {str(e)[:50]}")
-        finally:
-            self._voice_active = False
-            self._safe_mic_reset()
-            self._safe_avatar_stop()
-    
-    # ---- Thread-safe helpers ----
-    
-    def _safe_status(self, text: str):
-        """Thread-safe обновление статуса голоса."""
-        from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
-        try:
-            QMetaObject.invokeMethod(
-                self.voice_status, "setText",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, text)
-            )
-        except RuntimeError:
-            pass  # C++ object deleted
-    
-    def _safe_transcript(self, text: str):
-        """Thread-safe показ распознанного текста."""
-        from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
-        try:
-            QMetaObject.invokeMethod(
-                self.transcript_label, "setText",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, f'"{text}"')
-            )
-            QMetaObject.invokeMethod(
-                self.transcript_label, "show",
-                Qt.ConnectionType.QueuedConnection
-            )
-        except RuntimeError:
-            pass
-    
-    def _safe_speak(self, text: str):
-        """Thread-safe TTS в фоновом потоке."""
-        try:
-            # Включаем анимацию рта перед речью
-            self.avatar_widget.set_speaking.emit(True)
-            speak(text)
-        except Exception as e:
-            logger.warning(f"TTS failed: {e}")
-        finally:
-            self.avatar_widget.set_speaking.emit(False)
-    
-    def _safe_avatar_stop(self):
-        """Thread-safe остановка анимации рта аватара."""
-        try:
-            self.avatar_widget.set_speaking.emit(False)
-            self.avatar_widget.set_mood("neutral")
-        except RuntimeError:
-            pass
-    
-    def _safe_avatar_mood(self, mood: str):
-        """Thread-safe смена настроения аватара."""
-        try:
-            self.avatar_widget.set_mood(mood)
-        except RuntimeError:
-            pass
-    
-    def _safe_mic_reset(self):
-        """Thread-safe сброс кнопки микрофона."""
-        from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
-        try:
-            QMetaObject.invokeMethod(
-                self.mic_btn, "setEnabled",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(bool, True)
-            )
-            QMetaObject.invokeMethod(
-                self.mic_btn, "setText",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, "🎤 Говорить")
-            )
-        except RuntimeError:
-            pass
-    
-    def _safe_refresh(self):
-        """Thread-safe обновление таблицы."""
-        from PyQt6.QtCore import QMetaObject, Qt
-        try:
-            QMetaObject.invokeMethod(
-                self, "refresh_table",
-                Qt.ConnectionType.QueuedConnection
-            )
-        except RuntimeError:
-            pass
 
 
 def main():
