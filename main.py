@@ -50,7 +50,6 @@ if __name__ == "__main__":
     from voice_assistant import _init_player
     _init_player()
     
-    from gui import MainWindow
     window = MainWindow()
     window.show()
     

@@ -175,7 +175,7 @@ def convert_and_play(mp3_path: str):
         ps_command = f"""
         Add-Type -AssemblyName System.Windows.Forms;
         $player = New-Object System.Media.SoundPlayer;
-        $player.Stream = (New-Object System.IO.MemoryStream(
+        $player.Stream = New-Object System.IO.MemoryStream(
             ,[System.IO.File]::ReadAllBytes('{mp3_path}')
         ));
         $player.Play();

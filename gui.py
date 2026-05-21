@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QCheckBox, QLabel, QMessageBox, QSystemTrayIcon, QMenu,
     QTabWidget, QGroupBox, QProgressBar, QTextEdit,
-    QFrame, QHeaderView,
+    QFrame,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction, QFont, QColor
@@ -363,13 +363,13 @@ class MainWindow(QMainWindow):
         # Setup UI
         self.setup_ui()
 
-        # Start reminder engine
+        # Setup system tray
+        self.setup_tray()
+
+        # Start reminder engine (after tray is ready)
         self.engine = ReminderEngine()
         self.engine.notification_signal.connect(self.show_notification)
         self.engine.start()
-
-        # Setup system tray
-        self.setup_tray()
 
         # Load data
         self.refresh_table()
@@ -589,6 +589,12 @@ class MainWindow(QMainWindow):
             enabled_item.setData(Qt.ItemDataRole.UserRole, item["id"])
             self.table.setItem(row, 4, enabled_item)
 
+        # Disconnect previous handler to avoid duplicate signals
+        try:
+            self.table.itemChanged.disconnect()
+        except TypeError:
+            pass  # Not connected yet
+        
         self.table.itemChanged.connect(self.on_item_changed)
 
     def on_item_changed(self, item):

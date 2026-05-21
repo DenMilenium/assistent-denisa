@@ -1,5 +1,6 @@
 """
-Greeting Screen — показывает фото ассистента + приветствие голосом
+Greeting Screen — показывает аватар + приветствие голосом
+Thread-safe: все вызовы GUI через сигналы, защита от double-close
 """
 
 from PyQt6.QtWidgets import (
@@ -9,7 +10,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, pyqtProperty, QEasingCurve
 from PyQt6.QtGui import QPixmap, QFont, QPainter, QColor, QLinearGradient, QBrush, QPainterPath
 
-from voice_assistant import create_greeting, speak, play_audio, text_to_speech
+from voice_assistant import create_greeting, play_audio, text_to_speech
 from theme import (
     TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY,
     BG_PRIMARY, BG_PANEL, BG_SURFACE,
@@ -25,10 +26,11 @@ logger = logging.getLogger(__name__)
 
 
 class GreetingOverlay(QWidget):
-    """Full-screen greeting overlay with photo and voice."""
+    """Full-screen greeting overlay with animated avatar and voice."""
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._closed = False  # защита от double-close
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setGeometry(parent.geometry() if parent else QApplication.primaryScreen().geometry())
@@ -36,7 +38,7 @@ class GreetingOverlay(QWidget):
         self.opacity = 0.0
         self.setup_ui()
         self.start_animation()
-        
+    
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -139,15 +141,16 @@ class GreetingOverlay(QWidget):
         greeting_text = create_greeting()
         
         # Set subtitle
-        # Truncate for display
         display_text = greeting_text[:100] + "..." if len(greeting_text) > 100 else greeting_text
         self.subtitle_label.setText(display_text)
         
-        # Speak greeting in background thread (GUI-safe via signals)
+        # Кэшируем сигнал ДО запуска потока (thread-safe)
+        speak_signal = self.avatar_widget.avatar.set_speaking
+        
+        # Speak greeting in background thread
         def _speak():
             try:
-                # Signal avatar to speak
-                self.avatar_widget.avatar.set_speaking.emit(True)
+                speak_signal.emit(True)
                 
                 file_path = text_to_speech(greeting_text)
                 if file_path:
@@ -155,8 +158,7 @@ class GreetingOverlay(QWidget):
                     time.sleep(0.8)
                     play_audio(file_path)
                 
-                # Signal avatar to stop
-                self.avatar_widget.avatar.set_speaking.emit(False)
+                speak_signal.emit(False)
             except Exception as e:
                 logger.warning(f"Greeting speech failed: {e}")
         
@@ -165,10 +167,26 @@ class GreetingOverlay(QWidget):
         # Auto-close after greeting
         QTimer.singleShot(7000, self.close)
     
+    def close(self):
+        """Thread-safe close with double-close protection."""
+        if self._closed:
+            return
+        self._closed = True
+        
+        # Останавливаем анимацию аватара (через сигнал — потокобезопасно)
+        if hasattr(self, 'avatar_widget') and self.avatar_widget is not None:
+            try:
+                self.avatar_widget.avatar.set_speaking.emit(False)
+            except RuntimeError:
+                pass  # C++ объект уже удалён
+            except Exception:
+                pass
+        
+        super().close()
+    
     def closeEvent(self, event):
-        """Stop avatar animation when closing."""
-        if hasattr(self, 'avatar_widget') and hasattr(self.avatar_widget, 'avatar'):
-            self.avatar_widget.avatar.set_speaking(False)
+        """Handle close event."""
+        self._closed = True
         super().closeEvent(event)
     
     def paintEvent(self, event):
