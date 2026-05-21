@@ -29,23 +29,34 @@ PLAY_METHOD = None
 def _init_player():
     global PLAY_METHOD
     
-    # Method 1: PowerShell Media Player (plays MP3 natively on Windows 10+)
+    # Method 1: python-vlc (best quality, plays anything)
+    try:
+        import vlc
+        vlc_instance = vlc.Instance("--no-xlib --quiet")
+        if vlc_instance:
+            PLAY_METHOD = "vlc"
+            logger.info("Audio: using python-vlc (best quality)")
+            return
+    except Exception:
+        pass
+    
+    # Method 2: PowerShell (WMP or default app)
     import subprocess as _sp
     for ps_cmd in ["powershell.exe", "powershell"]:
         try:
             r = _sp.run(
                 [ps_cmd, "-NoProfile", "-Command",
-                 "try { Add-Type -AssemblyName System.Windows.Forms; $p=New-Object System.Media.SoundPlayer; Write-Output 'ok' } catch { Write-Error $_ }"],
+                 "try { $player = New-Object -ComObject WMPlayer.OCX; Write-Output 'ok' } catch { Write-Error $_ }"],
                 capture_output=True, timeout=3, text=True
             )
             if r.returncode == 0 and 'ok' in r.stdout:
                 PLAY_METHOD = "powershell"
-                logger.info(f"Audio: using PowerShell MediaPlayer (via {ps_cmd})")
+                logger.info(f"Audio: using PowerShell WMP (via {ps_cmd})")
                 return
         except Exception:
             continue
     
-    # Method 2: ffplay (FFmpeg, plays anything)
+    # Method 3: ffplay (FFmpeg)
     try:
         r = _sp.run(["ffplay", "-version"], capture_output=True, timeout=3)
         if r.returncode == 0:
@@ -55,24 +66,25 @@ def _init_player():
     except Exception:
         pass
     
-    # Method 3: winsound (built-in, WAV only — will convert MP3→WAV)
-    try:
-        import winsound
-        _ = winsound.SND_FILENAME
-        PLAY_METHOD = "winsound"
-        logger.info("Audio: using winsound (WAV via PowerShell conversion)")
-        return
-    except Exception:
-        pass
-    
     # Method 4: os.startfile (system default app)
     try:
         import platform
         if platform.system() == "Windows":
+            import os
             _sp.run(["cmd", "/c", "ver"], capture_output=True, timeout=2, check=True)
             PLAY_METHOD = "os_default"
-            logger.info("Audio: using os.startfile (system default)")
+            logger.info("Audio: using os.startfile (system default player)")
             return
+    except Exception:
+        pass
+    
+    # Method 5: winsound (last resort, WAV only)
+    try:
+        import winsound
+        _ = winsound.SND_FILENAME
+        PLAY_METHOD = "winsound"
+        logger.info("Audio: using winsound (WAV conversion)")
+        return
     except Exception:
         pass
     
@@ -164,6 +176,9 @@ def play_audio_impl(file_path: str):
         except:
             convert_and_play(file_path)
     
+    elif PLAY_METHOD == "vlc":
+        play_with_vlc(file_path)
+    
     elif PLAY_METHOD == "powershell":
         play_with_powershell(file_path)
     
@@ -200,6 +215,23 @@ def convert_and_play(mp3_path: str):
         ).start()
     except Exception as e:
         logger.warning(f"Convert and play failed: {e}")
+
+
+def play_with_vlc(mp3_path: str):
+    """Play audio using VLC (best quality)."""
+    try:
+        import vlc
+        instance = vlc.Instance("--no-xlib --quiet")
+        player = instance.media_player_new()
+        media = instance.media_new(mp3_path)
+        player.set_media(media)
+        player.play()
+        import time
+        time.sleep(0.5)
+        # Let it play in background
+    except Exception as e:
+        logger.warning(f"VLC playback failed: {e}")
+        play_with_os_default(mp3_path)
 
 
 def play_with_powershell(mp3_path: str):
