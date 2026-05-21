@@ -10,6 +10,12 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QTime, Qt
 
+from theme import (
+    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY, BG_SURFACE, BG_SECONDARY,
+    BRAND_ACCENT, BRAND_GREEN, BORDER_STANDARD, BORDER_SUBTLE, BORDER_SOLID,
+    FONT_SIZE_SM, FONT_SIZE_MD, STYLE_INPUT, STYLE_CHECKBOX,
+)
+
 import database
 import telegram_notifier
 
@@ -66,9 +72,19 @@ class ScheduleItemDialog(QDialog):
 
         # Buttons
         btn_layout = QHBoxLayout()
-        self.ok_btn = QPushButton("OK")
+        self.ok_btn = QPushButton("✅ Сохранить")
+        self.ok_btn.setStyleSheet("""
+            QPushButton { background-color: #5E6AD2; color: white; border: none;
+            border-radius: 6px; padding: 8px 20px; font-size: 13px; font-weight: 500; }
+            QPushButton:hover { background-color: #828FFF; }
+        """)
         self.ok_btn.clicked.connect(self.accept)
         cancel_btn = QPushButton("Отмена")
+        cancel_btn.setStyleSheet("""
+            QPushButton { background-color: rgba(255,255,255,0.05); color: #D0D6E0;
+            border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 8px 20px; font-size: 13px; }
+            QPushButton:hover { background-color: rgba(255,255,255,0.1); }
+        """)
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(self.ok_btn)
         btn_layout.addWidget(cancel_btn)
@@ -121,24 +137,51 @@ class SettingsDialog(QDialog):
         layout.addLayout(form)
 
         # Notifications options
-        layout.addWidget(QLabel("Уведомления:"))
-        self.notify_pc_cb = QCheckBox("Показывать на ПК")
+        notif_group = QGroupBox("🔊 Озвучивание")
+        notif_group.setStyleSheet(f"""
+            QGroupBox {{ color: {TEXT_SECONDARY}; font-size: 13px; font-weight: 500;
+            border: 1px solid {BORDER_STANDARD}; border-radius: 8px; margin-top: 8px; padding: 12px; }}
+            QGroupBox::title {{ color: {TEXT_SECONDARY}; }}
+        """)
+        notif_layout = QVBoxLayout(notif_group)
+        self.notify_pc_cb = QCheckBox("Показывать уведомления на ПК")
         self.notify_pc_cb.setChecked(True)
-        layout.addWidget(self.notify_pc_cb)
-
-        self.notify_tg_cb = QCheckBox("Отправлять в Telegram")
-        layout.addWidget(self.notify_tg_cb)
+        notif_layout.addWidget(self.notify_pc_cb)
+        self.notify_voice_cb = QCheckBox("🎤 Озвучивать напоминания голосом на ПК")
+        self.notify_voice_cb.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 13px; spacing: 8px;")
+        notif_layout.addWidget(self.notify_voice_cb)
+        self.notify_tg_cb = QCheckBox("📱 Отправлять в Telegram")
+        notif_layout.addWidget(self.notify_tg_cb)
+        self.voice_tg_cb = QCheckBox("🎤 Отправлять голосовые сообщения в Telegram вместо текста")
+        self.voice_tg_cb.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 13px; spacing: 8px;")
+        notif_layout.addWidget(self.voice_tg_cb)
+        layout.addWidget(notif_group)
 
         # Test button
-        test_btn = QPushButton("Тест Telegram")
+        test_btn = QPushButton("📨 Тест Telegram")
+        test_btn.setStyleSheet("""
+            QPushButton { background-color: rgba(16, 185, 129, 0.1); color: #10B981;
+            border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 6px; padding: 8px 16px; font-size: 13px; }
+            QPushButton:hover { background-color: rgba(16, 185, 129, 0.2); }
+        """)
         test_btn.clicked.connect(self.test_telegram)
         layout.addWidget(test_btn)
 
         # Save / Cancel
         btn_layout = QHBoxLayout()
-        save_btn = QPushButton("Сохранить")
+        save_btn = QPushButton("💾 Сохранить")
+        save_btn.setStyleSheet("""
+            QPushButton { background-color: #5E6AD2; color: white; border: none;
+            border-radius: 6px; padding: 8px 20px; font-size: 13px; font-weight: 500; }
+            QPushButton:hover { background-color: #828FFF; }
+        """)
         save_btn.clicked.connect(self.save_settings)
         cancel_btn = QPushButton("Отмена")
+        cancel_btn.setStyleSheet("""
+            QPushButton { background-color: rgba(255,255,255,0.05); color: #D0D6E0;
+            border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 8px 20px; font-size: 13px; }
+            QPushButton:hover { background-color: rgba(255,255,255,0.1); }
+        """)
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(save_btn)
         btn_layout.addWidget(cancel_btn)
@@ -148,13 +191,17 @@ class SettingsDialog(QDialog):
         self.token_edit.setText(database.get_setting("telegram_token"))
         self.chat_id_edit.setText(database.get_setting("telegram_chat_id"))
         self.notify_pc_cb.setChecked(database.get_setting("notify_pc") == "1")
+        self.notify_voice_cb.setChecked(database.get_setting("notify_voice") == "1")
         self.notify_tg_cb.setChecked(database.get_setting("notify_telegram") == "1")
+        self.voice_tg_cb.setChecked(database.get_setting("voice_telegram") == "1")
 
     def save_settings(self):
         database.set_setting("telegram_token", self.token_edit.text().strip())
         database.set_setting("telegram_chat_id", self.chat_id_edit.text().strip())
         database.set_setting("notify_pc", "1" if self.notify_pc_cb.isChecked() else "0")
+        database.set_setting("notify_voice", "1" if self.notify_voice_cb.isChecked() else "0")
         database.set_setting("notify_telegram", "1" if self.notify_tg_cb.isChecked() else "0")
+        database.set_setting("voice_telegram", "1" if self.voice_tg_cb.isChecked() else "0")
         QMessageBox.information(self, "Готово", "Настройки сохранены!")
         self.accept()
 

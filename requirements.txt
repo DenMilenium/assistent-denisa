@@ -4,3 +4,5 @@ plyer
 schedule
 requests
 openpyxl
+edge-tts
+pygame

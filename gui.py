@@ -1,27 +1,33 @@
 """
 Daily Schedule Reminder — Main GUI Window
-+ Goals tab integration
++ Goals tab + completion tracking + stats
 """
 
 import sys
 import logging
-import threading
 from datetime import datetime
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QCheckBox, QLabel, QMessageBox, QSystemTrayIcon, QMenu,
-    QTabWidget, QGroupBox, QGridLayout, QProgressBar, QTextEdit,
-    QFrame,
+    QTabWidget, QGroupBox, QProgressBar, QTextEdit,
+    QFrame, QHeaderView,
 )
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QAction, QIcon, QFont, QColor
+from PyQt6.QtGui import QAction, QFont, QColor
 
 import database
 from dialogs import ScheduleItemDialog, SettingsDialog
 from reminder_engine import ReminderEngine
 from goals import load_all_goals, get_today_schedule, get_urgent_tasks
+from sync_goals import auto_sync
+from theme import TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY, TEXT_QUATERNARY
+from theme import BG_PRIMARY, BG_PANEL, BG_SURFACE, BG_SECONDARY
+from theme import BRAND_ACCENT, BRAND_GREEN, BRAND_RED, BRAND_ORANGE
+from theme import BORDER_SUBTLE, BORDER_STANDARD, BORDER_SOLID
+from theme import FONT_SIZE_SM, FONT_SIZE_MD, FONT_SIZE_LG, FONT_SIZE_XL
+from theme import SPACING_SM, SPACING_MD, SPACING_LG, SPACING_XL
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,13 +38,140 @@ logger = logging.getLogger(__name__)
 DAY_NAMES = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
 GOAL_COLORS = {
-    1: "#4A90D9",  # Finance - blue
-    2: "#7B68EE",  # Intellect - purple
-    3: "#FF6B6B",  # Creative - red
-    4: "#51CF66",  # Body - green
-    5: "#FFA94D",  # Business - orange
-    6: "#FF6B9D",  # Networking - pink
+    1: "#4A90D9", 2: "#7B68EE", 3: "#FF6B6B",
+    4: "#51CF66", 5: "#FFA94D", 6: "#FF6B9D",
 }
+
+
+class StatsWidget(QWidget):
+    """Statistics and dynamics tab."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_ui()
+        self.refresh()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Today stats
+        today_group = QGroupBox("📊 Сегодня")
+        today_layout = QHBoxLayout(today_group)
+        self.today_done_label = QLabel("Выполнено: 0")
+        self.today_done_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #51CF66;")
+        self.today_total_label = QLabel("Всего: 0")
+        self.today_total_label.setStyleSheet("font-size: 18px;")
+        self.today_pct_label = QLabel("0%")
+        self.today_pct_label.setStyleSheet("font-size: 22px; font-weight: bold; color: #4A90D9;")
+        today_layout.addWidget(self.today_done_label)
+        today_layout.addWidget(self.today_total_label)
+        today_layout.addStretch()
+        today_layout.addWidget(self.today_pct_label)
+        layout.addWidget(today_group)
+
+        # Week stats
+        week_group = QGroupBox("📅 Неделя")
+        week_layout = QVBoxLayout(week_group)
+        self.week_table = QTableWidget()
+        self.week_table.setColumnCount(3)
+        self.week_table.setHorizontalHeaderLabels(["День", "Выполнено", "Всего"])
+        self.week_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.week_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.week_table.verticalHeader().setVisible(False)
+        week_layout.addWidget(self.week_table)
+        self.week_total_label = QLabel("Итого за неделю: 0 / 0")
+        self.week_total_label.setStyleSheet("font-size: 14px; font-weight: bold;")
+        week_layout.addWidget(self.week_total_label)
+        layout.addWidget(week_group)
+
+        # Monthly progress bar
+        month_group = QGroupBox("📈 Месячная динамика")
+        month_layout = QVBoxLayout(month_group)
+        self.month_bars = QVBoxLayout()
+        month_layout.addLayout(self.month_bars)
+        layout.addWidget(month_group)
+
+        # Refresh button
+        refresh_btn = QPushButton("🔄 Обновить статистику")
+        refresh_btn.clicked.connect(self.refresh)
+        layout.addWidget(refresh_btn)
+        layout.addStretch()
+
+    def refresh(self):
+        from datetime import datetime, timedelta
+
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # Today stats
+        items = database.get_all_items()
+        today_completed = 0
+        total_enabled = sum(1 for i in items if i["enabled"])
+        for item in items:
+            if item["enabled"] and database.is_completed_today(item["id"]):
+                today_completed += 1
+
+        self.today_done_label.setText(f"✅ Выполнено: {today_completed}")
+        self.today_total_label.setText(f"📋 Всего: {total_enabled}")
+        pct = (today_completed / total_enabled * 100) if total_enabled else 0
+        self.today_pct_label.setText(f"{int(pct)}%")
+
+        # Week stats
+        week_data = database.get_week_stats()
+        self.week_table.setRowCount(7)
+
+        day_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+        week_dates = {}
+        for d in week_data.get("daily_data", []):
+            week_dates[d["date"]] = d["done_count"]
+
+        week_total = 0
+        today_dt = datetime.now()
+        start_of_week = today_dt - timedelta(days=today_dt.weekday())
+
+        for i in range(7):
+            date = (start_of_week + timedelta(days=i)).strftime("%Y-%m-%d")
+            done = week_dates.get(date, 0)
+            week_total += done
+            self.week_table.setItem(i, 0, QTableWidgetItem(day_names[i]))
+            done_item = QTableWidgetItem(str(done))
+            if done > 0:
+                done_item.setForeground(QColor("#51CF66"))
+            self.week_table.setItem(i, 1, done_item)
+            self.week_table.setItem(i, 2, QTableWidgetItem(str(total_enabled)))
+
+        self.week_total_label.setText(f"Итого за неделю: {week_total} / {total_enabled * 7}")
+
+        # Month bars (last 30 days)
+        month_data = database.get_completion_stats(30)
+
+        # Clear old bars
+        while self.month_bars.count():
+            item = self.month_bars.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if month_data:
+            max_done = max(d["done_count"] for d in month_data) or 1
+            for day_data in month_data[:14]:  # Last 14 days
+                bar_layout = QHBoxLayout()
+                date_label = QLabel(day_data["date"][5:])  # MM-DD
+                date_label.setFixedWidth(50)
+                bar = QProgressBar()
+                bar.setRange(0, max(total_enabled, 1))
+                bar.setValue(day_data["done_count"])
+                bar.setTextVisible(True)
+                bar.setFormat(f"{day_data['done_count']}/{total_enabled}")
+                bar.setFixedHeight(20)
+                pct = day_data["done_count"] / max(total_enabled, 1)
+                if pct >= 0.8:
+                    bar.setStyleSheet("QProgressBar::chunk { background-color: #51CF66; }")
+                elif pct >= 0.5:
+                    bar.setStyleSheet("QProgressBar::chunk { background-color: #FFA94D; }")
+                else:
+                    bar.setStyleSheet("QProgressBar::chunk { background-color: #FF6B6B; }")
+                bar_layout.addWidget(date_label)
+                bar_layout.addWidget(bar)
+                self.month_bars.addLayout(bar_layout)
 
 
 class GoalsWidget(QWidget):
@@ -54,14 +187,29 @@ class GoalsWidget(QWidget):
 
         # Top: total progress
         progress_layout = QHBoxLayout()
-        progress_layout.addWidget(QLabel("Общий прогресс:"))
+        total_label = QLabel("Общий прогресс:")
+        total_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 14px; font-weight: 500;")
+        progress_layout.addWidget(total_label)
         self.total_progress_bar = QProgressBar()
         self.total_progress_bar.setRange(0, 100)
         self.total_progress_bar.setTextVisible(True)
+        self.total_progress_bar.setStyleSheet(f"""
+            QProgressBar {{ border: 1px solid {BORDER_SUBTLE}; border-radius: 6px;
+            text-align: center; height: 28px; background-color: rgba(255,255,255,0.03);
+            color: {TEXT_PRIMARY}; font-size: 13px; font-weight: 600; }}
+            QProgressBar::chunk {{ background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                stop:0 #5E6AD2, stop:1 #7170FF); border-radius: 5px; }}
+        """)
         progress_layout.addWidget(self.total_progress_bar)
         self.refresh_btn = QPushButton("🔄")
-        self.refresh_btn.setToolTip("Обновить")
-        self.refresh_btn.setFixedWidth(40)
+        self.refresh_btn.setToolTip("Обновить данные из Excel")
+        self.refresh_btn.setFixedWidth(36)
+        self.refresh_btn.setFixedHeight(28)
+        self.refresh_btn.setStyleSheet("""
+            QPushButton { background-color: rgba(255,255,255,0.05); color: #D0D6E0;
+            border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; font-size: 14px; }
+            QPushButton:hover { background-color: rgba(255,255,255,0.1); }
+        """)
         self.refresh_btn.clicked.connect(self.load_data)
         progress_layout.addWidget(self.refresh_btn)
         layout.addLayout(progress_layout)
@@ -87,7 +235,7 @@ class GoalsWidget(QWidget):
         # Goals progress bars
         goals_group = QGroupBox("🎯 Генеральные цели")
         goals_layout = QVBoxLayout(goals_group)
-        self.goal_bars = []  # (label, progress_bar)
+        self.goal_bars = []
         for i in range(6):
             bar_layout = QHBoxLayout()
             label = QLabel("")
@@ -101,7 +249,7 @@ class GoalsWidget(QWidget):
             self.goal_bars.append((label, bar))
         layout.addWidget(goals_group)
 
-        # Subtasks table (compact)
+        # Subtasks table
         subtasks_group = QGroupBox("📋 Подзадачи")
         subtasks_layout = QVBoxLayout(subtasks_group)
         self.subtask_table = QTableWidget()
@@ -118,7 +266,8 @@ class GoalsWidget(QWidget):
         try:
             data = load_all_goals()
         except Exception as e:
-            self.today_text.setText(f"⚠️ Файл целей не найден: {e}")
+            self.today_text.setText(f"⚠️ Файл целей не найден на рабочем столе")
+            logger.warning(f"Goals load failed: {e}")
             return
 
         # Total progress
@@ -126,11 +275,15 @@ class GoalsWidget(QWidget):
         self.total_progress_bar.setValue(int(prog))
         self.total_progress_bar.setFormat(f"{prog}%")
 
+        # Colors for bars
+        colors = ["#4A90D9", "#7B68EE", "#FF6B6B", "#51CF66", "#FFA94D", "#FF6B9D"]
+
         # Today schedule
         today_info = get_today_schedule()
         if today_info:
-            text = f"📅 {today_info.get('date', '').strftime('%d.%m.%Y') if hasattr(today_info.get('date'), 'strftime') else ''}"
-            text += f"  |  🔥 {today_info.get('priority', '')}"
+            d = today_info.get("date", "")
+            date_str = d.strftime("%d.%m.%Y") if hasattr(d, "strftime") else ""
+            text = f"📅 {date_str}  |  🔥 {today_info.get('priority', '')}"
             text += f"\n🌅 {today_info.get('morning', '')}"
             text += f"\n💼 {today_info.get('work_morning', '')} / {today_info.get('work_evening', '')}"
             text += f"\n📚 {today_info.get('development', '')}"
@@ -145,33 +298,35 @@ class GoalsWidget(QWidget):
             for t in urgent[:5]:
                 days = t.get("days_left", 0)
                 emoji = "🔥" if days <= 0 else "⏰"
-                text += f"{emoji} {t['name']} — {t.get('deadline', '')} ({'просрочено' if days < 0 else f'осталось {days} дн.'})\n"
+                text += f"{emoji} {t['name']} — {t.get('deadline', '')}"
+                if days < 0:
+                    text += " (🔥 просрочено)"
+                else:
+                    text += f" (осталось {days} дн.)"
+                text += "\n"
             self.urgent_text.setText(text)
         else:
             self.urgent_text.setText("✅ Срочных задач нет")
-
         # Goal progress bars
-        color_values = ["#4A90D9", "#7B68EE", "#FF6B6B", "#51CF66", "#FFA94D", "#FF6B9D"]
+        color_map = {"1": "#4A90D9", "2": "#7B68EE", "3": "#FF6B6B",
+                     "4": "#51CF66", "5": "#FFA94D", "6": "#FF6B9D"}
         for i, (label, bar) in enumerate(self.goal_bars):
             if i < len(data.get("goals", [])):
                 goal = data["goals"][i]
                 pct = goal.get("progress", 0)
-                if isinstance(pct, str):
-                    try:
-                        pct = float(pct)
-                    except:
-                        pct = 0
-                label.setText(f"{goal['name']}")
+                label.setText(goal["name"])
+                label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 13px; font-weight: 500;")
                 bar.setValue(int(pct))
                 bar.setFormat(f"{int(pct)}%")
-                # Set color via stylesheet
-                color = color_values[i] if i < len(color_values) else "#888"
+                color = color_map.get(str(i+1), "#7170FF")
                 bar.setStyleSheet(f"""
-                    QProgressBar {{ border: 1px solid #555; border-radius: 4px; text-align: center; height: 22px; }}
+                    QProgressBar {{ border: 1px solid rgba(255,255,255,0.05); border-radius: 4px;
+                    text-align: center; height: 24px; background-color: rgba(255,255,255,0.03);
+                    color: {TEXT_SECONDARY}; font-size: 12px; font-weight: 500; }}
                     QProgressBar::chunk {{ background-color: {color}; border-radius: 3px; }}
                 """)
 
-        # Subtasks table
+        # Subtasks
         subtasks = data.get("subtasks", [])
         self.subtask_table.setRowCount(len(subtasks))
         for row, task in enumerate(subtasks):
@@ -184,24 +339,27 @@ class GoalsWidget(QWidget):
             self.subtask_table.setItem(row, 1, QTableWidgetItem(task["name"]))
             self.subtask_table.setItem(row, 2, QTableWidgetItem(task.get("deadline", "")))
             prog = task.get("progress", 0)
-            self.subtask_table.setItem(row, 3, QTableWidgetItem(f"{int(prog) if prog else 0}%"))
+            self.subtask_table.setItem(row, 3, QTableWidgetItem(f"{int(prog)}%"))
             status = task.get("status", "")
-            item = QTableWidgetItem(status)
-            if status in ("Горит", "Просрочено", "Срочно"):
-                item.setForeground(QColor("#FF4444"))
-            elif status == "Выполнено":
-                item.setForeground(QColor("#44CC44"))
-            self.subtask_table.setItem(row, 4, item)
+            status_item = QTableWidgetItem(status)
+            if status.lower() in ("горит", "просрочено", "срочно"):
+                status_item.setForeground(QColor("#FF4444"))
+            elif status.lower() == "выполнено":
+                status_item.setForeground(QColor("#44CC44"))
+            self.subtask_table.setItem(row, 4, status_item)
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Assistent denisa")
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(850, 650)
 
         # Init DB
         database.init_db()
+
+        # Auto-sync from goals if first run
+        auto_sync()
 
         # Setup UI
         self.setup_ui()
@@ -219,8 +377,8 @@ class MainWindow(QMainWindow):
 
         # Auto-refresh goals every 5 minutes
         self.refresh_timer = QTimer()
-        self.refresh_timer.timeout.connect(self.refresh_goals)
-        self.refresh_timer.start(300000)  # 5 min
+        self.refresh_timer.timeout.connect(self.auto_refresh)
+        self.refresh_timer.start(300000)
 
     def setup_ui(self):
         central = QWidget()
@@ -230,8 +388,9 @@ class MainWindow(QMainWindow):
         # Tabs
         self.tabs = QTabWidget()
         self.tabs.setFont(QFont("Segoe UI", 10))
+        self.tabs.currentChanged.connect(self.on_tab_changed)
 
-        # Tab 1: Schedule (original)
+        # Tab 1: Schedule
         schedule_tab = QWidget()
         schedule_layout = QVBoxLayout(schedule_tab)
         self.setup_schedule_tab(schedule_layout)
@@ -241,12 +400,31 @@ class MainWindow(QMainWindow):
         self.goals_widget = GoalsWidget()
         self.tabs.addTab(self.goals_widget, "🎯 Цели 2026")
 
+        # Tab 3: Stats
+        self.stats_widget = StatsWidget()
+        self.tabs.addTab(self.stats_widget, "📊 Статистика")
+
         layout.addWidget(self.tabs)
 
     def setup_schedule_tab(self, layout):
-        # Top: settings button
+        # Top bar
         top_layout = QHBoxLayout()
-        settings_btn = QPushButton("⚙️ Настройки Telegram")
+        sync_btn = QPushButton("🔄 Синхр. с целями")
+        sync_btn.setToolTip("Обновить расписание из файла целей")
+        sync_btn.setStyleSheet("""
+            QPushButton { background-color: rgba(16, 185, 129, 0.1); color: #10B981; 
+            border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 6px; padding: 7px 14px; font-size: 13px; }
+            QPushButton:hover { background-color: rgba(16, 185, 129, 0.2); }
+        """)
+        sync_btn.clicked.connect(self.resync_goals)
+        top_layout.addWidget(sync_btn)
+
+        settings_btn = QPushButton("⚙️ Telegram")
+        settings_btn.setStyleSheet("""
+            QPushButton { background-color: rgba(113, 112, 255, 0.1); color: #7170FF; 
+            border: 1px solid rgba(113, 112, 255, 0.2); border-radius: 6px; padding: 7px 14px; font-size: 13px; }
+            QPushButton:hover { background-color: rgba(113, 112, 255, 0.2); }
+        """)
         settings_btn.clicked.connect(self.open_settings)
         top_layout.addWidget(settings_btn)
         top_layout.addStretch()
@@ -254,21 +432,37 @@ class MainWindow(QMainWindow):
 
         # Table
         self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Время", "Задача", "Дни", "Активно"])
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["✓", "Время", "Задача", "Дни", "Активно"])
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
         layout.addWidget(self.table)
 
         # Bottom buttons
         btn_layout = QHBoxLayout()
         add_btn = QPushButton("➕ Добавить")
+        add_btn.setStyleSheet("""
+            QPushButton { background-color: #5E6AD2; color: white; border: none;
+            border-radius: 6px; padding: 9px 18px; font-size: 13px; font-weight: 500; }
+            QPushButton:hover { background-color: #828FFF; }
+        """)
         add_btn.clicked.connect(self.add_item)
         edit_btn = QPushButton("✏️ Редактировать")
+        edit_btn.setStyleSheet("""
+            QPushButton { background-color: rgba(255,255,255,0.05); color: #D0D6E0;
+            border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 9px 18px; font-size: 13px; }
+            QPushButton:hover { background-color: rgba(255,255,255,0.1); color: #F7F8F8; }
+        """)
         edit_btn.clicked.connect(self.edit_item)
         delete_btn = QPushButton("🗑️ Удалить")
+        delete_btn.setStyleSheet("""
+            QPushButton { background-color: rgba(239, 68, 68, 0.1); color: #EF4444;
+            border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 6px; padding: 9px 18px; font-size: 13px; }
+            QPushButton:hover { background-color: rgba(239, 68, 68, 0.2); }
+        """)
         delete_btn.clicked.connect(self.delete_item)
         btn_layout.addWidget(add_btn)
         btn_layout.addWidget(edit_btn)
@@ -293,6 +487,10 @@ class MainWindow(QMainWindow):
         goals_action = QAction("🎯 Цели 2026", self)
         goals_action.triggered.connect(lambda: self.show_and_tab(1))
         tray_menu.addAction(goals_action)
+
+        stats_action = QAction("📊 Статистика", self)
+        stats_action.triggered.connect(lambda: self.show_and_tab(2))
+        tray_menu.addAction(stats_action)
 
         settings_action = QAction("Настройки", self)
         settings_action.triggered.connect(self.open_settings)
@@ -331,39 +529,93 @@ class MainWindow(QMainWindow):
         self.engine.wait(2000)
         QApplication.quit()
 
-    def refresh_goals(self):
+    def on_tab_changed(self, index):
+        if index == 1:  # Goals
+            self.goals_widget.load_data()
+        elif index == 2:  # Stats
+            self.stats_widget.refresh()
+
+    def auto_refresh(self):
         self.goals_widget.load_data()
+
+    def resync_goals(self):
+        """Re-sync schedule from goals file."""
+        reply = QMessageBox.question(
+            self, "Синхронизация",
+            "Обновить расписание из файла целей? Текущие напоминания из целей будут заменены.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            database.delete_goal_items()
+            database.set_setting("auto_schedule_synced", "0")
+            auto_sync()
+            self.refresh_table()
 
     def refresh_table(self):
         items = database.get_all_items()
         self.table.setRowCount(len(items))
 
         for row, item in enumerate(items):
-            self.table.setItem(row, 0, QTableWidgetItem(item["time"]))
-            self.table.setItem(row, 1, QTableWidgetItem(item["text"]))
+            # Completion checkbox
+            completed = database.is_completed_today(item["id"])
+            check_item = QTableWidgetItem()
+            check_item.setFlags(check_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            check_item.setCheckState(
+                Qt.CheckState.Checked if completed else Qt.CheckState.Unchecked
+            )
+            check_item.setData(Qt.ItemDataRole.UserRole, item["id"])
+            if completed:
+                check_item.setBackground(QColor("#1a3a1a"))
+            self.table.setItem(row, 0, check_item)
+
+            # Time
+            self.table.setItem(row, 1, QTableWidgetItem(item["time"]))
+
+            # Text
+            text_item = QTableWidgetItem(item["text"])
+            if item.get("is_from_goals"):
+                text_item.setForeground(QColor("#8888FF"))
+            if completed:
+                text_item.setForeground(QColor("#666666"))
+                font = text_item.font()
+                font.setStrikeOut(True)
+                text_item.setFont(font)
+            self.table.setItem(row, 2, text_item)
+
+            # Days
             mask = item["days_mask"]
             days_str = ", ".join(
                 DAY_NAMES[i] for i in range(7) if mask & (1 << i)
             )
-            self.table.setItem(row, 2, QTableWidgetItem(days_str))
+            self.table.setItem(row, 3, QTableWidgetItem(days_str))
 
+            # Enabled
             enabled_item = QTableWidgetItem()
             enabled_item.setFlags(enabled_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             enabled_item.setCheckState(
                 Qt.CheckState.Checked if item["enabled"] else Qt.CheckState.Unchecked
             )
             enabled_item.setData(Qt.ItemDataRole.UserRole, item["id"])
-            self.table.setItem(row, 3, enabled_item)
+            self.table.setItem(row, 4, enabled_item)
 
-        self.table.itemChanged.connect(self.on_enabled_changed)
-        self.table.verticalHeader().setVisible(False)
+        self.table.itemChanged.connect(self.on_item_changed)
 
-    def on_enabled_changed(self, item):
-        if item.column() == 3:
-            item_id = item.data(Qt.ItemDataRole.UserRole)
-            if item_id is not None:
-                enabled = item.checkState() == Qt.CheckState.Checked
-                database.update_item(item_id, enabled=enabled)
+    def on_item_changed(self, item):
+        col = item.column()
+        item_id = item.data(Qt.ItemDataRole.UserRole)
+        if item_id is None:
+            return
+
+        if col == 0:  # Completion checkbox
+            if item.checkState() == Qt.CheckState.Checked:
+                database.mark_completed(item_id)
+            else:
+                database.unmark_completed(item_id)
+            self.refresh_table()
+
+        elif col == 4:  # Enabled checkbox
+            enabled = item.checkState() == Qt.CheckState.Checked
+            database.update_item(item_id, enabled=enabled)
 
     def add_item(self):
         dialog = ScheduleItemDialog(self)
@@ -449,7 +701,11 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Assistent denisa")
-
+    
+    # Apply dark theme
+    from theme import apply_theme
+    apply_theme(app)
+    
     window = MainWindow()
     window.show()
 

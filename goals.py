@@ -13,8 +13,23 @@ if not os.path.exists(GOALS_FILE):
     GOALS_FILE = os.path.join(desktop, "цели_2026_трекер.xlsx")
 
 
+def _parse_progress(val):
+    """Parse progress value to float, handling strings and None."""
+    if val is None:
+        return 0
+    if isinstance(val, (int, float)):
+        return float(val)
+    try:
+        return float(str(val).replace("%", "").replace(",", ".").strip())
+    except (ValueError, TypeError):
+        return 0
+
+
 def load_all_goals():
     """Load goals data from Excel file."""
+    if not os.path.exists(GOALS_FILE):
+        return {"goals": [], "subtasks": [], "schedule": [], "monthly": [], "billionaires": [], "total_progress": 0}
+
     wb = openpyxl.load_workbook(GOALS_FILE, data_only=True)
     data = {}
 
@@ -28,7 +43,7 @@ def load_all_goals():
                 "name": row[1],
                 "deadline": str(row[2]) if row[2] else "",
                 "status": str(row[3]) if row[3] else "",
-                "progress": row[4] if row[4] else 0,
+                "progress": _parse_progress(row[4]),
                 "description": str(row[5]) if row[5] else "",
             })
     data["goals"] = goals
@@ -37,13 +52,13 @@ def load_all_goals():
     ws = wb["Подзадачи"]
     subtasks = []
     for row in ws.iter_rows(min_row=7, max_row=42, values_only=True):
-        if row[2]:  # has task name
+        if row[1]:  # has task name
             subtasks.append({
                 "goal_id": row[0] if row[0] else 0,
-                "name": row[1] if row[1] else "",
+                "name": str(row[1]) if row[1] else "",
                 "category": str(row[2]) if row[2] else "",
                 "deadline": str(row[3]) if row[3] else "",
-                "progress": row[4] if row[4] else 0,
+                "progress": _parse_progress(row[4]),
                 "status": str(row[5]) if row[5] else "",
                 "description": str(row[6]) if row[6] else "",
             })
@@ -105,13 +120,11 @@ def load_all_goals():
     data["billionaires"] = billionaires
 
     # Dashboard metrics
-    ws = wb["Дашборд"]
     total_progress = 0
     goal_count = 0
-    for row in ws.iter_rows(min_row=23, max_row=28, values_only=True):
-        if row[1] and isinstance(row[16], (int, float)):
-            total_progress += row[16]
-            goal_count += 1
+    for g in goals:
+        total_progress += g["progress"]
+        goal_count += 1
     data["total_progress"] = round(total_progress / goal_count, 1) if goal_count else 0
 
     wb.close()
@@ -123,7 +136,7 @@ def get_today_schedule():
     data = load_all_goals()
     today = datetime.now().date()
     for item in data.get("schedule", []):
-        if isinstance(item["date"], datetime) and item["date"].date() == today:
+        if isinstance(item.get("date"), datetime) and item["date"].date() == today:
             return item
     return None
 
@@ -131,32 +144,42 @@ def get_today_schedule():
 def get_urgent_tasks():
     """Get tasks that are due within 7 days or overdue."""
     data = load_all_goals()
-    today = datetime.now().date()
+    today = datetime.now()
     urgent = []
 
     for task in data.get("subtasks", []):
-        if task["status"] in ("Выполнено", "Выполнено"):
+        status = task.get("status", "").strip().lower()
+        if status in ("выполнено", "выполнено"):
             continue
-        if task["progress"] and task["progress"] >= 100:
+        if task.get("progress", 0) >= 100:
             continue
 
-        deadline_str = task.get("deadline", "")
+        deadline_str = task.get("deadline", "").strip()
+        if not deadline_str:
+            continue
+
         # Parse various date formats
-        try:
-            for fmt in ["%d.%m.%Y", "%Y-%m-%d", "%d.%m.%Y", "%B %Y", "%b %Y"]:
+        deadline = None
+        for fmt in ["%d.%m.%Y", "%Y-%m-%d", "%d.%m.%Y"]:
+            try:
+                deadline = datetime.strptime(deadline_str, fmt)
+                break
+            except ValueError:
+                continue
+
+        if deadline is None:
+            # Try month-year format
+            for fmt in ["%B %Y", "%b %Y", "%m.%Y"]:
                 try:
-                    deadline = datetime.strptime(deadline_str, fmt).date()
-                    days_left = (deadline - today).days
-                    if 0 <= days_left <= 7:
-                        task["days_left"] = days_left
-                        urgent.append(task)
-                    elif days_left < 0 and days_left > -30:
-                        task["days_left"] = days_left
-                        urgent.append(task)
+                    deadline = datetime.strptime(deadline_str, fmt)
                     break
-                except:
+                except ValueError:
                     continue
-        except:
-            pass
+
+        if deadline:
+            days_left = (deadline - today).days
+            if -30 <= days_left <= 7:
+                task["days_left"] = days_left
+                urgent.append(task)
 
     return sorted(urgent, key=lambda x: x.get("days_left", 999))

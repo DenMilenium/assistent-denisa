@@ -79,17 +79,44 @@ class ReminderEngine(QThread):
 
     def _fire_reminder(self, text: str, time_str: str):
         """Fire a reminder notification."""
-        title = f"⏰ Напоминание {time_str}"
+        title = f"⏰ {time_str}"
         message = f"🔔 {text}"
 
         # Emit PC notification signal
         self.notification_signal.emit(title, message)
 
+        # Voice notification on PC
+        try:
+            from voice_assistant import create_reminder_message, speak
+            voice_text = create_reminder_message(text, time_str)
+            voice_setting = database.get_setting("notify_voice")
+            if voice_setting == "1":
+                import threading
+                threading.Thread(target=lambda: speak(voice_text), daemon=True).start()
+        except Exception as e:
+            logger.warning(f"Voice reminder failed: {e}")
+
         # Send Telegram
         token = database.get_setting("telegram_token")
         chat_id = database.get_setting("telegram_chat_id")
         notify_tg = database.get_setting("notify_telegram") == "1"
+        voice_tg = database.get_setting("voice_telegram") == "1"
 
         if token and chat_id and notify_tg:
-            tg_text = f"⏰ *Напоминание* {time_str}\n\n🔔 {text}"
-            telegram_notifier.send_telegram(tg_text, token, chat_id)
+            if voice_tg:
+                try:
+                    from voice_assistant import create_voice_message_bytes, create_reminder_message
+                    voice_text_tg = create_reminder_message(text, time_str)
+                    audio_data = create_voice_message_bytes(voice_text_tg)
+                    if audio_data:
+                        telegram_notifier.send_voice(audio_data, token, chat_id)
+                    else:
+                        tg_text = f"⏰ *{time_str}*\n\n{text}"
+                        telegram_notifier.send_telegram(tg_text, token, chat_id)
+                except Exception as e:
+                    logger.warning(f"Voice TG failed: {e}")
+                    tg_text = f"⏰ *{time_str}*\n\n{text}"
+                    telegram_notifier.send_telegram(tg_text, token, chat_id)
+            else:
+                tg_text = f"⏰ *{time_str}*\n\n{text}"
+                telegram_notifier.send_telegram(tg_text, token, chat_id)
