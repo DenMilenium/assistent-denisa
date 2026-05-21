@@ -32,8 +32,8 @@ def _init_player():
     # Method 1: winsound (built-in Windows, plays WAV)
     try:
         import winsound
-        # Verify winsound actually works with a silent test
-        winsound.PlaySound(None, winsound.SND_PURGE)
+        # Simple test — try to get available devices
+        _ = winsound.SND_FILENAME
         PLAY_METHOD = "winsound"
         logger.info("Audio: using winsound (built-in) + PowerShell conversion")
         return

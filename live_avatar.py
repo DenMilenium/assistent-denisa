@@ -1,376 +1,381 @@
 """
-Live Avatar — animated photorealistic avatar with expressions
-Uses CSS keyframe animations via QLabel + QTimer for fluid motion
+Live Avatar — Cyberpunk Neon Animated Avatar
+Fluid particle-based avatar with expressions, glow, and speech reactivity
+В стиле deep space (#0A0A0F) с violet→cyan градиентами
 """
 
-from PyQt6.QtWidgets import QLabel, QWidget, QVBoxLayout, QHBoxLayout
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, pyqtProperty, QEasingCurve, QRectF, QPointF, pyqtSlot
+from PyQt6.QtWidgets import QLabel, QWidget, QVBoxLayout
+from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
     QPixmap, QPainter, QColor, QLinearGradient, QBrush, QPen,
-    QRadialGradient, QFont, QPainterPath, QGradient,
+    QRadialGradient, QPainterPath, QFont, QConicalGradient,
 )
 import math
 import random
 
 
-class MouthShape:
-    """Animated mouth parameters."""
-    CLOSED = 0.0
-    OPEN = 1.0
-    SMILE = 2.0
-
-
-class EyeState:
-    OPEN = 0.0
-    CLOSED = 1.0
-    HAPPY = 2.0  # squint
+class Particle:
+    """Floating particle around the avatar."""
+    def __init__(self):
+        self.reset()
+    
+    def reset(self):
+        self.x = random.uniform(0.0, 1.0)
+        self.y = random.uniform(0.0, 1.0)
+        self.vx = random.uniform(-0.003, 0.003)
+        self.vy = random.uniform(-0.003, 0.003)
+        self.size = random.uniform(1.0, 3.5)
+        self.alpha = random.uniform(0.1, 0.6)
+        self.phase = random.uniform(0, 2 * math.pi)
+        self.color = random.choice([
+            QColor(180, 130, 255),   # violet
+            QColor(100, 200, 255),   # cyan
+            QColor(200, 100, 255),   # magenta
+            QColor(120, 220, 255),   # light cyan
+        ])
+    
+    def update(self, time: float):
+        self.x += self.vx
+        self.y += self.vy
+        self.alpha = 0.2 + 0.4 * (0.5 + 0.5 * math.sin(time * 2 + self.phase))
+        
+        # Bounce off edges
+        if self.x < 0 or self.x > 1:
+            self.vx *= -1
+        if self.y < 0 or self.y > 1:
+            self.vy *= -1
 
 
 class LiveAvatar(QLabel):
     """
-    Animated photorealistic avatar with:
-    - Smooth head movement (breathing, slight sway)
-    - Eye blinking (random interval)
-    - Lip sync simulation
-    - Subtle facial expressions
-    - Hair, skin, facial features
-    """
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(180, 180)
-        
-        # Animation state
-        self.blink_timer = 0
-        self.breath_phase = 0.0
-        self.eye_openness = 1.0  # 0=closed, 1=open
-        self.mouth_openness = 0.0
-        self.head_tilt = 0.0
-        self.eyebrow_height = 0.0
-        
-        # Animation timer
-        self.anim_timer = QTimer(self)
-        self.anim_timer.timeout.connect(self.animate)
-        self.anim_timer.start(50)  # 20 FPS
-        
-        # Blink timer
-        self.next_blink = random.randint(30, 80)  # frames until next blink
-        self.is_blinking = False
-        
-        # Render immediately
-        self.render_avatar()
-
-    def animate(self):
-        """Frame update — 20 FPS animation loop."""
-        self.breath_phase += 0.04
-        
-        # Natural head sway (subtle)
-        self.head_tilt = math.sin(self.breath_phase) * 0.008
-        
-        # Blink logic
-        if self.is_blinking:
-            self.blink_timer -= 1
-            if self.blink_timer <= 0:
-                self.is_blinking = False
-                self.next_blink = random.randint(30, 80)
-        else:
-            self.next_blink -= 1
-            if self.next_blink <= 0:
-                self.is_blinking = True
-                self.blink_timer = 4  # 4 frames = 200ms blink
-        
-        # Smooth eye transition
-        if self.is_blinking:
-            blink_progress = self.blink_timer / 4.0
-            self.eye_openness = 1.0 - blink_progress
-        else:
-            self.eye_openness += (1.0 - self.eye_openness) * 0.3
-        
-        self.render_avatar()
-    
-    @pyqtSlot(bool)
-    def set_speaking(self, is_speaking: bool):
-        """Trigger mouth animation for speech."""
-        if is_speaking:
-            # Random mouth movement
-            self.mouth_openness = 0.3 + random.random() * 0.5
-            self.eyebrow_height = 0.03  # Slight eyebrow raise
-        else:
-            self.mouth_openness *= 0.85  # Smooth close
-            self.eyebrow_height *= 0.9
-    
-    def render_avatar(self):
-        """Paint the avatar with current animation state."""
-        pixmap = QPixmap(180, 180)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        # Save state for head transform
-        painter.save()
-        cx, cy = 90, 95  # Center of head
-        
-        # Apply subtle head sway
-        painter.translate(cx, cy)
-        painter.rotate(math.degrees(self.head_tilt))
-        painter.translate(-cx, -cy)
-        
-        # === NECK ===
-        neck_path = QPainterPath()
-        neck_path.addRoundedRect(68, 125, 44, 30, 5, 5)
-        painter.fillPath(neck_path, QColor(255, 218, 185))  # Skin tone
-        
-        # === HAIR (modern short haircut) ===
-        # Base hair
-        hair_gradient = QLinearGradient(50, 30, 130, 80)
-        hair_gradient.setColorAt(0.0, QColor(30, 30, 35))  # Dark brown
-        hair_gradient.setColorAt(1.0, QColor(50, 50, 55))
-        
-        # Main hair volume
-        hair_path = QPainterPath()
-        hair_path.moveTo(35, 75)
-        hair_path.cubicTo(30, 50, 40, 25, 60, 20)
-        hair_path.cubicTo(80, 15, 100, 15, 120, 20)
-        hair_path.cubicTo(140, 25, 150, 50, 145, 75)
-        hair_path.cubicTo(148, 60, 138, 35, 120, 28)
-        hair_path.cubicTo(100, 22, 80, 22, 60, 28)
-        hair_path.cubicTo(42, 35, 32, 60, 35, 75)
-        painter.fillPath(hair_path, QBrush(hair_gradient))
-        
-        # Hair top volume (more texture)
-        top_hair = QPainterPath()
-        top_hair.moveTo(50, 65)
-        top_hair.cubicTo(48, 42, 60, 25, 80, 22)
-        top_hair.cubicTo(95, 20, 110, 22, 120, 28)
-        top_hair.cubicTo(110, 35, 90, 30, 70, 35)
-        top_hair.cubicTo(60, 40, 55, 50, 58, 65)
-        painter.fillPath(top_hair, QColor(35, 35, 40))
-        
-        # Hair side texture
-        left_hair = QPainterPath()
-        left_hair.moveTo(35, 75)
-        left_hair.cubicTo(30, 65, 32, 52, 38, 45)
-        left_hair.cubicTo(40, 55, 38, 65, 42, 72)
-        painter.fillPath(left_hair, QColor(25, 25, 30))
-        
-        right_hair = QPainterPath()
-        right_hair.moveTo(145, 75)
-        right_hair.cubicTo(150, 65, 148, 52, 142, 45)
-        right_hair.cubicTo(140, 55, 142, 65, 138, 72)
-        painter.fillPath(right_hair, QColor(25, 25, 30))
-        
-        # === FACE SHAPE ===
-        face_path = QPainterPath()
-        face_path.moveTo(45, 70)
-        face_path.cubicTo(38, 80, 35, 95, 38, 110)
-        face_path.cubicTo(42, 125, 50, 130, 55, 133)
-        face_path.cubicTo(60, 136, 68, 138, 80, 138)
-        face_path.cubicTo(92, 138, 100, 136, 105, 133)
-        face_path.cubicTo(110, 130, 118, 125, 122, 110)
-        face_path.cubicTo(125, 95, 122, 80, 115, 70)
-        face_path.cubicTo(110, 65, 100, 62, 90, 62)
-        face_path.cubicTo(80, 62, 70, 65, 65, 68)
-        face_path.cubicTo(55, 65, 48, 67, 45, 70)
-        
-        # Skin fill
-        skin_gradient = QLinearGradient(90, 65, 90, 140)
-        skin_gradient.setColorAt(0.0, QColor(255, 215, 180))
-        skin_gradient.setColorAt(0.5, QColor(255, 210, 178))
-        skin_gradient.setColorAt(1.0, QColor(245, 200, 168))
-        painter.fillPath(face_path, QBrush(skin_gradient))
-        
-        # === EYEBROWS ===
-        brow_y_offset = -30 + self.eyebrow_height * 15
-        
-        # Left eyebrow
-        painter.setPen(QPen(QColor(40, 35, 30), 2.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        left_brow = QPainterPath()
-        left_brow.moveTo(58, 78 + brow_y_offset)
-        left_brow.cubicTo(62, 75 + brow_y_offset, 68, 74 + brow_y_offset, 76, 75 + brow_y_offset)
-        painter.drawPath(left_brow)
-        
-        # Right eyebrow
-        right_brow = QPainterPath()
-        right_brow.moveTo(104, 78 + brow_y_offset)
-        right_brow.cubicTo(100, 75 + brow_y_offset, 94, 74 + brow_y_offset, 86, 75 + brow_y_offset)
-        painter.drawPath(right_brow)
-        
-        # === EYES ===
-        eye_open = self.eye_openness
-        
-        # Left eye
-        eye_path_left = QPainterPath()
-        eye_path_left.moveTo(62, 95)
-        eye_path_left.cubicTo(62, 91, 66, 88, 73, 88)
-        eye_path_left.cubicTo(80, 88, 82, 91, 82, 95)
-        eye_path_left.cubicTo(82, 95 + 6 * (1 - eye_open), 62, 95 + 6 * (1 - eye_open), 62, 95)
-        
-        # Eye white
-        painter.fillPath(eye_path_left, QColor(240, 240, 250))
-        painter.setPen(QPen(QColor(80, 75, 70), 1.0))
-        painter.drawPath(eye_path_left)
-        
-        if eye_open > 0.2:
-            # Iris
-            pupil_cx, pupil_cy = 72, 93
-            iris_r = 5
-            painter.setBrush(QColor(70, 100, 140))  # Blue-grey eyes
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(QPointF(pupil_cx, pupil_cy), iris_r, iris_r * eye_open)
-            
-            # Pupil
-            painter.setBrush(QColor(20, 20, 25))
-            painter.drawEllipse(QPointF(pupil_cx, pupil_cy), 2.5, 2.5 * eye_open)
-            
-            # Eye shine
-            painter.setBrush(QColor(255, 255, 255, 200))
-            painter.drawEllipse(QPointF(pupil_cx - 2, pupil_cy - 2), 1.5, 1.5 * eye_open)
-        
-        # Right eye
-        eye_path_right = QPainterPath()
-        eye_path_right.moveTo(98, 95)
-        eye_path_right.cubicTo(98, 91, 100, 88, 107, 88)
-        eye_path_right.cubicTo(114, 88, 118, 91, 118, 95)
-        eye_path_right.cubicTo(118, 95 + 6 * (1 - eye_open), 98, 95 + 6 * (1 - eye_open), 98, 95)
-        
-        painter.fillPath(eye_path_right, QColor(240, 240, 250))
-        painter.setPen(QPen(QColor(80, 75, 70), 1.0))
-        painter.drawPath(eye_path_right)
-        
-        if eye_open > 0.2:
-            pupil_cx2, pupil_cy2 = 108, 93
-            painter.setBrush(QColor(70, 100, 140))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(QPointF(pupil_cx2, pupil_cy2), iris_r, iris_r * eye_open)
-            painter.setBrush(QColor(20, 20, 25))
-            painter.drawEllipse(QPointF(pupil_cx2, pupil_cy2), 2.5, 2.5 * eye_open)
-            painter.setBrush(QColor(255, 255, 255, 200))
-            painter.drawEllipse(QPointF(pupil_cx2 - 2, pupil_cy2 - 2), 1.5, 1.5 * eye_open)
-        
-        # === NOSE ===
-        painter.setPen(QPen(QColor(200, 170, 150), 1.0))
-        nose_path = QPainterPath()
-        nose_path.moveTo(90, 96)
-        nose_path.cubicTo(87, 100, 86, 105, 83, 110)
-        nose_path.cubicTo(83, 113, 85, 115, 90, 115)
-        nose_path.cubicTo(95, 115, 97, 113, 97, 110)
-        nose_path.cubicTo(94, 105, 93, 100, 90, 96)
-        painter.drawPath(nose_path)
-        
-        # Nostrils
-        painter.setBrush(QColor(180, 150, 130))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawEllipse(QPointF(85, 113), 1.5, 1.0)
-        painter.drawEllipse(QPointF(95, 113), 1.5, 1.0)
-        
-        # === MOUTH ===
-        mouth_open = self.mouth_openness
-        
-        # Lips
-        if mouth_open < 0.3:
-            # Closed mouth (slight smile)
-            mouth_path = QPainterPath()
-            mouth_path.moveTo(68, 122)
-            mouth_path.cubicTo(73, 118, 78, 116, 82, 116)
-            mouth_path.cubicTo(98, 116, 105, 118, 112, 122)
-            mouth_path.cubicTo(105, 125, 98, 127, 82, 127)
-            mouth_path.cubicTo(78, 127, 73, 125, 68, 122)
-            
-            painter.fillPath(mouth_path, QColor(180, 100, 90))
-            painter.setPen(QPen(QColor(160, 90, 80), 1.0))
-            painter.drawPath(mouth_path)
-        else:
-            # Open mouth (speaking)
-            mouth_w = 44 * (0.5 + mouth_open * 0.5)
-            mouth_h = 4 + mouth_open * 10
-            mx = 90 - mouth_w / 2
-            my = 120
-            
-            mouth_path = QPainterPath()
-            mouth_path.moveTo(mx, my)
-            mouth_path.cubicTo(
-                mx + mouth_w * 0.25, my - 2,
-                mx + mouth_w * 0.75, my - 2,
-                mx + mouth_w, my
-            )
-            mouth_path.cubicTo(
-                mx + mouth_w * 0.75, my + mouth_h,
-                mx + mouth_w * 0.25, my + mouth_h,
-                mx, my
-            )
-            
-            painter.fillPath(mouth_path, QColor(40, 20, 20))  # Inside mouth
-            painter.setPen(QPen(QColor(180, 100, 90), 1.5))
-            painter.drawPath(mouth_path)
-        
-        # === JAWLINE / CHIN ===
-        painter.setPen(QPen(QColor(220, 185, 160), 1.0))
-        jaw_path = QPainterPath()
-        jaw_path.moveTo(55, 133)
-        jaw_path.cubicTo(60, 136, 68, 138, 80, 138)
-        jaw_path.cubicTo(92, 138, 100, 136, 105, 133)
-        painter.drawPath(jaw_path)
-        
-        # === EARS ===
-        # Left ear
-        painter.setBrush(QColor(255, 210, 178))
-        painter.setPen(QPen(QColor(230, 185, 155), 1.0))
-        painter.drawEllipse(QRectF(38, 85, 12, 18))
-        
-        # Right ear
-        painter.drawEllipse(QRectF(130, 85, 12, 18))
-        
-        # === Subtle skin highlights ===
-        # Nose bridge highlight
-        highlight = QRadialGradient(90, 100, 20)
-        highlight.setColorAt(0.0, QColor(255, 230, 200, 40))
-        highlight.setColorAt(1.0, QColor(255, 230, 200, 0))
-        painter.setBrush(QBrush(highlight))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawEllipse(QRectF(75, 85, 30, 40))
-        
-        # === Neck shadow ===
-        neck_shadow = QPainterPath()
-        neck_shadow.addRect(80, 135, 20, 10)
-        neck_shadow_grad = QLinearGradient(90, 135, 90, 145)
-        neck_shadow_grad.setColorAt(0.0, QColor(0, 0, 0, 30))
-        neck_shadow_grad.setColorAt(1.0, QColor(0, 0, 0, 0))
-        painter.fillPath(neck_shadow, QBrush(neck_shadow_grad))
-        
-        painter.restore()
-        painter.end()
-        
-        self.setPixmap(pixmap)
-
-
-class AnimatedAvatarWidget(QWidget):
-    """
-    Widget containing the animated avatar with subtle glow.
+    Cyberpunk neon animated avatar with:
+    - Fluid particle constellation (head shape)
+    - Pulsing neon glow ring
+    - Eye animation (blink, look around)
+    - Mouth react to speech
+    - Floating particles around
+    - Color shifts (violet ↔ cyan)
     """
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(200, 200)
         
+        # Animation state
+        self.time = 0.0
+        self.eye_openness = 1.0
+        self.mouth_openness = 0.0
+        self.mood = "neutral"  # neutral, happy, thinking, speaking
+        self.speech_energy = 0.0  # 0-1 for lip sync
+        self.glow_pulse = 0.0
+        self.look_x = 0.0
+        self.look_y = 0.0
+        
+        # Particles
+        self.particles = [Particle() for _ in range(30)]
+        
+        # Blink state
+        self.next_blink = random.randint(30, 80)
+        self.is_blinking = False
+        self.blink_timer = 0
+        
+        # Look direction
+        self.look_target_x = 0.0
+        self.look_target_y = 0.0
+        self.look_timer = 0
+        
+        # Animation timer (30 FPS — smoother)
+        self.anim_timer = QTimer(self)
+        self.anim_timer.timeout.connect(self.animate)
+        self.anim_timer.start(33)
+        
+        # Render initial frame
+        self.render_frame()
+    
+    def animate(self):
+        self.time += 0.05
+        
+        # --- Blink ---
+        if self.is_blinking:
+            self.blink_timer -= 1
+            if self.blink_timer <= 0:
+                self.is_blinking = False
+                self.next_blink = random.randint(60, 150)
+        else:
+            self.next_blink -= 1
+            if self.next_blink <= 0:
+                self.is_blinking = True
+                self.blink_timer = 4
+        
+        if self.is_blinking:
+            blink_progress = self.blink_timer / 4.0
+            self.eye_openness = 1.0 - blink_progress
+        else:
+            self.eye_openness += (1.0 - self.eye_openness) * 0.3
+        
+        # --- Look direction (random gentle saccades) ---
+        self.look_timer -= 1
+        if self.look_timer <= 0:
+            self.look_target_x = random.uniform(-0.3, 0.3)
+            self.look_target_y = random.uniform(-0.15, 0.15)
+            self.look_timer = random.randint(30, 100)
+        self.look_x += (self.look_target_x - self.look_x) * 0.08
+        self.look_y += (self.look_target_y - self.look_y) * 0.08
+        
+        # --- Speech energy decay ---
+        if self.mood != "speaking":
+            self.mouth_openness *= 0.92
+            self.speech_energy *= 0.85
+        
+        # --- Glow pulse ---
+        self.glow_pulse = 0.5 + 0.5 * math.sin(self.time * 0.7)
+        
+        # --- Update particles ---
+        for p in self.particles:
+            p.update(self.time)
+        
+        self.render_frame()
+    
+    @pyqtSlot(bool)
+    def set_speaking(self, is_speaking: bool):
+        if is_speaking:
+            self.mood = "speaking"
+            self.speech_energy = min(1.0, self.speech_energy + 0.3)
+            # Random mouth movement for speech
+            self.mouth_openness = 0.3 + random.random() * 0.5
+        else:
+            if self.mood == "speaking":
+                self.mood = "neutral"
+    
+    def set_mood(self, mood: str):
+        """Set avatar mood: neutral, happy, thinking, speaking"""
+        if mood in ("neutral", "happy", "thinking", "speaking"):
+            self.mood = mood
+    
+    def render_frame(self):
+        pixmap = QPixmap(200, 200)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        
+        cx, cy = 100, 100  # center
+        
+        # === 1. OUTER GLOW RING ===
+        glow_r = 70 + 5 * self.glow_pulse * (0.8 + 0.2 * self.speech_energy)
+        glow_alpha = int(30 + 20 * self.glow_pulse + 30 * self.speech_energy)
+        
+        glow = QRadialGradient(cx, cy, glow_r)
+        glow_color = QColor(140, 90, 255)  # violet
+        glow.setColorAt(0.0, QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 0))
+        glow.setColorAt(0.7, QColor(glow_color.red(), glow_color.green(), glow_color.blue(), glow_alpha))
+        glow.setColorAt(1.0, QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 0))
+        painter.setBrush(QBrush(glow))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(cx, cy), glow_r, glow_r)
+        
+        # === 2. INNER GLOW (cyan) ===
+        inner_r = 45 + 3 * self.glow_pulse
+        inner_glow = QRadialGradient(cx, cy, inner_r)
+        inner_glow.setColorAt(0.0, QColor(100, 200, 255, 15))
+        inner_glow.setColorAt(0.8, QColor(80, 180, 255, 5))
+        inner_glow.setColorAt(1.0, QColor(80, 180, 255, 0))
+        painter.setBrush(QBrush(inner_glow))
+        painter.drawEllipse(QPointF(cx, cy), inner_r, inner_r)
+        
+        # === 3. HEAD — fluid neon contours (cyberpunk style) ===
+        # Head is drawn as a glowing elliptical silhouette
+        head_cx, head_cy = cx, cy - 5
+        head_w = 52 + 2 * math.sin(self.time * 0.5)
+        head_h = 64 + 2 * math.cos(self.time * 0.3)
+        
+        # Head fill (semi-transparent neon)
+        head_gradient = QRadialGradient(head_cx, head_cy, head_w)
+        head_gradient.setColorAt(0.0, QColor(200, 150, 255, 80))
+        head_gradient.setColorAt(0.6, QColor(140, 90, 255, 40))
+        head_gradient.setColorAt(1.0, QColor(80, 180, 255, 10))
+        painter.setBrush(QBrush(head_gradient))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(head_cx, head_cy), head_w, head_h)
+        
+        # Head outline (neon wireframe)
+        head_pen = QPen(QColor(180, 130, 255, 120 + 60 * self.glow_pulse), 1.5)
+        painter.setPen(head_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(QPointF(head_cx, head_cy), head_w, head_h)
+        
+        # === 4. EYES ===
+        eye_open = self.eye_openness
+        eye_y = head_cy - 8 + self.look_y * 3
+        
+        # Pupil radius
+        pupil_r = 3 * eye_open
+        
+        # Left eye
+        lex, ley = head_cx - 14 + self.look_x * 2, eye_y
+        # Eye socket glow
+        leye_glow = QRadialGradient(lex, ley, 10)
+        leye_glow.setColorAt(0.0, QColor(200, 180, 255, 60))
+        leye_glow.setColorAt(1.0, QColor(200, 180, 255, 0))
+        painter.setBrush(QBrush(leye_glow))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(lex, ley), 10, 10)
+        
+        # Eye shape
+        if eye_open > 0.1:
+            eye_path = QPainterPath()
+            eye_path.moveTo(lex - 7, ley)
+            eye_path.cubicTo(lex - 7, ley - 5 * eye_open, lex - 2, ley - 6 * eye_open, lex + 2, ley - 6 * eye_open)
+            eye_path.cubicTo(lex + 6, ley - 6 * eye_open, lex + 7, ley - 5 * eye_open, lex + 7, ley)
+            eye_path.cubicTo(lex + 7, ley + 5 * eye_open, lex + 6, ley + 6 * eye_open, lex + 2, ley + 6 * eye_open)
+            eye_path.cubicTo(lex - 2, ley + 6 * eye_open, lex - 7, ley + 5 * eye_open, lex - 7, ley)
+            
+            # Glowing iris
+            iris_color = QColor(100, 200, 255, 200) if self.mood != "thinking" else QColor(200, 150, 255, 200)
+            painter.setBrush(QBrush(iris_color))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawPath(eye_path)
+            
+            # Pupil
+            pupil_r = 3 * eye_open
+            painter.setBrush(QColor(30, 30, 50, 220))
+            painter.drawEllipse(QPointF(lex + self.look_x, ley + self.look_y), pupil_r, pupil_r * 1.2)
+            
+            # Eye shine
+            painter.setBrush(QColor(255, 255, 255, 180))
+            painter.drawEllipse(QPointF(lex - 2 + self.look_x, ley - 2 + self.look_y), 1.5, 1.5)
+        else:
+            # Closed eye — single glowing line
+            painter.setPen(QPen(QColor(180, 130, 255, 180), 2))
+            painter.drawLine(int(lex - 6), int(ley), int(lex + 6), int(ley))
+        
+        # Right eye
+        rex, rey = head_cx + 14 + self.look_x * 2, eye_y
+        reye_glow = QRadialGradient(rex, rey, 10)
+        reye_glow.setColorAt(0.0, QColor(200, 180, 255, 60))
+        reye_glow.setColorAt(1.0, QColor(200, 180, 255, 0))
+        painter.setBrush(QBrush(reye_glow))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(rex, rey), 10, 10)
+        
+        if eye_open > 0.1:
+            eye_path2 = QPainterPath()
+            eye_path2.moveTo(rex - 7, rey)
+            eye_path2.cubicTo(rex - 7, rey - 5 * eye_open, rex - 2, rey - 6 * eye_open, rex + 2, rey - 6 * eye_open)
+            eye_path2.cubicTo(rex + 6, rey - 6 * eye_open, rex + 7, rey - 5 * eye_open, rex + 7, rey)
+            eye_path2.cubicTo(rex + 7, rey + 5 * eye_open, rex + 6, rey + 6 * eye_open, rex + 2, rey + 6 * eye_open)
+            eye_path2.cubicTo(rex - 2, rey + 6 * eye_open, rex - 7, rey + 5 * eye_open, rex - 7, rey)
+            
+            iris_color2 = QColor(100, 200, 255, 200) if self.mood != "thinking" else QColor(200, 150, 255, 200)
+            painter.setBrush(QBrush(iris_color2))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawPath(eye_path2)
+            
+            painter.setBrush(QColor(30, 30, 50, 220))
+            painter.drawEllipse(QPointF(rex + self.look_x, rey + self.look_y), pupil_r, pupil_r * 1.2)
+            
+            painter.setBrush(QColor(255, 255, 255, 180))
+            painter.drawEllipse(QPointF(rex - 2 + self.look_x, rey - 2 + self.look_y), 1.5, 1.5)
+        else:
+            painter.setPen(QPen(QColor(180, 130, 255, 180), 2))
+            painter.drawLine(int(rex - 6), int(rey), int(rex + 6), int(rey))
+        
+        # === 5. MOUTH ===
+        mouth_y = head_cy + 18
+        mouth_open = self.mouth_openness
+        
+        if mouth_open < 0.15:
+            # Closed — subtle smile line (neon)
+            smile_path = QPainterPath()
+            smile_path.moveTo(head_cx - 12, mouth_y)
+            smile_path.cubicTo(head_cx - 6, mouth_y + 3 * (0.5 + 0.5 if self.mood == "happy" else 0.3),
+                              head_cx + 6, mouth_y + 3 * (0.5 + 0.5 if self.mood == "happy" else 0.3),
+                              head_cx + 12, mouth_y)
+            painter.setPen(QPen(QColor(255, 150, 200, 180), 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(smile_path)
+        else:
+            # Open mouth — neon glowing mouth
+            mw = 20 + mouth_open * 10
+            mh = 4 + mouth_open * 12
+            
+            mouth_gradient = QLinearGradient(head_cx - mw/2, mouth_y, head_cx + mw/2, mouth_y + mh)
+            mouth_gradient.setColorAt(0.0, QColor(255, 100, 150, 200))
+            mouth_gradient.setColorAt(0.5, QColor(255, 60, 120, 200))
+            mouth_gradient.setColorAt(1.0, QColor(200, 80, 150, 200))
+            
+            mouth_path = QPainterPath()
+            mouth_path.moveTo(head_cx - mw/2, mouth_y)
+            mouth_path.cubicTo(head_cx - mw/4, mouth_y - 2, head_cx + mw/4, mouth_y - 2, head_cx + mw/2, mouth_y)
+            mouth_path.cubicTo(head_cx + mw/4, mouth_y + mh, head_cx - mw/4, mouth_y + mh, head_cx - mw/2, mouth_y)
+            
+            painter.fillPath(mouth_path, QBrush(mouth_gradient))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawPath(mouth_path)
+        
+        # === 6. GLOWING DOTS (like cyberpunk facial decoration) ===
+        dot_alpha = int(100 + 50 * self.glow_pulse)
+        painter.setPen(Qt.PenStyle.NoPen)
+        
+        # Forehead dot
+        painter.setBrush(QColor(180, 130, 255, dot_alpha))
+        painter.drawEllipse(QPointF(head_cx, head_cy - 32), 2.5, 2.5)
+        
+        # Cheek dots
+        painter.setBrush(QColor(100, 200, 255, dot_alpha))
+        painter.drawEllipse(QPointF(head_cx - 30, head_cy + 6), 2, 2)
+        painter.drawEllipse(QPointF(head_cx + 30, head_cy + 6), 2, 2)
+        
+        # === 7. SPEECH WAVES (when speaking) ===
+        if self.speech_energy > 0.1:
+            wave_alpha = int(40 * self.speech_energy)
+            painter.setPen(QPen(QColor(100, 200, 255, wave_alpha), 1))
+            for i in range(5):
+                x_offset = (i - 2) * 18
+                wave_y = head_cy + 35
+                wave_h = 5 + 10 * self.speech_energy * (0.5 + 0.5 * math.sin(self.time * 4 + i))
+                wave_path = QPainterPath()
+                wave_path.moveTo(head_cx + x_offset - 5, wave_y)
+                wave_path.cubicTo(
+                    head_cx + x_offset - 5, wave_y + wave_h,
+                    head_cx + x_offset + 5, wave_y + wave_h,
+                    head_cx + x_offset + 5, wave_y,
+                )
+                painter.drawPath(wave_path)
+        
+        # === 8. PARTICLES ===
+        for p in self.particles:
+            px = p.x * 200
+            py = p.y * 200
+            p_alpha = int(p.alpha * 200)
+            p_color = QColor(p.color.red(), p.color.green(), p.color.blue(), p_alpha)
+            painter.setBrush(p_color)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(QPointF(px, py), p.size, p.size)
+        
+        painter.end()
+        self.setPixmap(pixmap)
+
+
+class AnimatedAvatarWidget(QWidget):
+    """Container widget with the neon animated avatar."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(220, 220)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        # Subtle glow background
-        self.glow = QLabel(self)
-        self.glow.setFixedSize(180, 180)
-        self.glow.setStyleSheet("""
-            background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, 
-                stop:0 rgba(94, 106, 210, 30), stop:0.5 rgba(113, 112, 255, 10), stop:1 transparent);
-            border-radius: 90px;
-        """)
-        self.glow.move(10, 10)
-        
-        # Avatar
         self.avatar = LiveAvatar(self)
         self.avatar.move(10, 10)
-        
-        layout.addStretch()
+        layout.addWidget(self.avatar)
     
+    @pyqtSlot(bool)
     def set_speaking(self, is_speaking: bool):
         self.avatar.set_speaking(is_speaking)
+    
+    def set_mood(self, mood: str):
+        self.avatar.set_mood(mood)

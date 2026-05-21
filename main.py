@@ -46,6 +46,10 @@ if __name__ == "__main__":
     from neon_theme import apply_neon_theme
     apply_neon_theme(app)
     
+    # Initialize audio player on startup
+    from voice_assistant import _init_player
+    _init_player()
+    
     from gui import MainWindow
     window = MainWindow()
     window.show()
