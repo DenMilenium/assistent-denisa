@@ -461,9 +461,16 @@ def _semantic_match(text: str) -> dict:
     
     # Goal word = bonus for goal actions
     if any(w in text_lower for w in ["цел", "миссия", "стратеги"]):
-        categories[ACTION_ADD_GOAL]["score"] += 2.0
-        categories[ACTION_LIST_GOALS]["score"] += 1.5
+        categories[ACTION_ADD_GOAL]["score"] += 3.0
+        categories[ACTION_LIST_GOALS]["score"] += 2.0
         categories[ACTION_GOAL_PROGRESS]["score"] += 1.5
+    
+    # "какие у меня" + goal = list_goals
+    if any(q in text_lower for q in ["какие у меня", "какая у меня", "какой у меня", "мои цели", "список целей"]):
+        if "цел" in text_lower:
+            categories[ACTION_LIST_GOALS]["score"] += 3.0
+        else:
+            categories[ACTION_LIST_TASKS]["score"] += 2.0
     
     # Task words = bonus for task actions
     if any(w in text_lower for w in TASK_NOUNS):
