@@ -203,17 +203,23 @@ def convert_and_play(mp3_path: str):
 
 
 def play_with_powershell(mp3_path: str):
-    """Play audio using PowerShell Media Player (plays any format)."""
+    """Play audio using PowerShell SoundPlayer (plays WAV) or MediaPlayer."""
     try:
-        # PowerShell script that uses Media Player to play MP3
+        # Try WMP COM object first (plays MP3 natively)
         ps_script = f'''
 $path = "{mp3_path}"
-$player = New-Object -ComObject MediaPlayer.MediaPlayer
-$player.Open($path)
-$player.Play()
-# Wait for playback
-Start-Sleep -Milliseconds 200
-while ($player.Status -eq 3) {{ Start-Sleep -Milliseconds 100 }}
+try {{
+    $player = New-Object -ComObject WMPlayer.OCX
+    $player.URL = $path
+    $player.controls.play()
+    Start-Sleep 1
+    while ($player.playState -eq 3) {{ Start-Sleep -Milliseconds 100 }}
+    $player = $null
+}} catch {{
+    # Fallback: start with system default app
+    $shell = New-Object -ComObject Shell.Application
+    $shell.ShellExecute("{mp3_path}")
+}}
 '''
         threading.Thread(
             target=lambda: subprocess.run(
