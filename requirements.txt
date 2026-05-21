@@ -6,3 +6,5 @@ requests
 openpyxl
 edge-tts
 pygame
+openai-whisper
+SpeechRecognition
