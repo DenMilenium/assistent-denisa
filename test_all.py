@@ -70,9 +70,12 @@ try:
         test("Speak function", result_path is not None)
         
         from voice_assistant import _init_player, PLAY_METHOD
-        _init_player()
-        test("Audio playback method", PLAY_METHOD is not None,
-             f"Method: {PLAY_METHOD}")
+        # Force reinit — module-level PLAY_METHOD may have been set by earlier import
+        import voice_assistant
+        voice_assistant.PLAY_METHOD = None
+        voice_assistant._init_player()
+        test("Audio playback method", voice_assistant.PLAY_METHOD is not None,
+             f"Method: {voice_assistant.PLAY_METHOD}")
         
 except Exception as e:
     import traceback
