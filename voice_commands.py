@@ -320,6 +320,8 @@ def extract_task_text(original: str, normalized: str) -> str:
     # Remove time/date patterns
     normalized, _ = _extract_time(normalized)
     normalized, _ = _extract_date(normalized)
+    if not normalized:
+        return original.capitalize() if original else ""
     
     # Remove remaining prefixes
     remaining_fillers = [
@@ -372,10 +374,8 @@ def parse_command(text: str) -> dict:
 
 
 def _semantic_match(text: str) -> dict:
-    """
-    Semantic scoring — каждая категория набирает очки по ключевым словам.
-    Побеждает категория с наибольшим счётом.
-    """
+    if not text:
+        return {"action": "unknown", "params": {}, "confidence": 0}
     text_lower = text.lower()
     
     categories = {
@@ -456,7 +456,7 @@ def _semantic_match(text: str) -> dict:
         categories[ACTION_ADD_SCHEDULE]["score"] += 1.5
     
     # Progress % detection = bonus for ACTION_GOAL_PROGRESS
-    if re.search(r'\d+\s*%', text):
+    if re.search(r'\d+\s*%', text) or re.search(r'\d+\s*(процент|процентов|процента)', text):
         categories[ACTION_GOAL_PROGRESS]["score"] += 3.0
     
     # Goal word = bonus for goal actions
@@ -487,7 +487,7 @@ def _semantic_match(text: str) -> dict:
         params["date"] = date_val if date_val else "today"
     
     if best_action == ACTION_GOAL_PROGRESS:
-        prog_match = re.search(r'(\d+)\s*%', text)
+        prog_match = re.search(r'(\d+)\s*%', text) or re.search(r'(\d+)\s*(?:процент|процентов|процента)', text)
         if prog_match:
             params["progress"] = int(prog_match.group(1))
         # Try to find goal name

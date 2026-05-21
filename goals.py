@@ -68,9 +68,14 @@ def load_all_goals():
     ws = wb["Расписание дня"]
     schedule = []
     for row in ws.iter_rows(min_row=6, max_row=70, values_only=True):
-        if not row[0]:
+        # Date is in column 2 (row[1]), column 1 (row[0]) is empty or legend
+        date_val = None
+        for col_idx in range(min(3, len(row))):
+            if row[col_idx] and isinstance(row[col_idx], (datetime, str)):
+                date_val = row[col_idx]
+                break
+        if not date_val:
             continue
-        date_val = row[0]
         # Handle both datetime objects and string dates
         if isinstance(date_val, str):
             try:
@@ -79,7 +84,7 @@ def load_all_goals():
                 continue
         if isinstance(date_val, datetime):
             schedule.append({
-                "date": row[0],
+                "date": date_val,
                 "day": str(row[1]) if row[1] else "",
                 "morning": str(row[2]) if row[2] else "",
                 "sport": str(row[3]) if row[3] else "",
