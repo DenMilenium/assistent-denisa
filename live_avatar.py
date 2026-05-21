@@ -155,6 +155,12 @@ class LiveAvatar(QLabel):
             if self.mood == "speaking":
                 self.mood = "neutral"
     
+    @pyqtSlot(str)
+    def _on_set_mood(self, mood: str):
+        """Slot for set_mood_signal — thread-safe mood change."""
+        if mood in ("neutral", "happy", "thinking", "speaking"):
+            self.mood = mood
+    
     def set_mood(self, mood: str):
         """Set avatar mood: neutral, happy, thinking, speaking"""
         if mood in ("neutral", "happy", "thinking", "speaking"):
