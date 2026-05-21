@@ -183,3 +183,42 @@ def transcribe_voice_bytes(voice_bytes: bytes) -> str:
 
 # Import here to avoid circular imports
 from datetime import datetime
+
+
+def record_from_mic(duration: int = 5, sample_rate: int = 16000) -> str:
+    """
+    Record audio from microphone, save to temporary WAV file.
+    Returns path to WAV file or None on failure.
+    """
+    if not SR_AVAILABLE:
+        logger.warning("SpeechRecognition not installed — cannot record from mic")
+        return None
+    
+    try:
+        import speech_recognition as sr
+        import tempfile
+        import wave
+        
+        r = sr.Recognizer()
+        with sr.Microphone(sample_rate=sample_rate) as source:
+            logger.info("Recording from microphone...")
+            r.adjust_for_ambient_noise(source, duration=0.3)
+            audio = r.listen(source, timeout=duration, phrase_time_limit=duration)
+        
+        # Save to temporary WAV
+        tmp = tempfile.NamedTemporaryFile(suffix="_mic.wav", delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+        
+        wav_data = audio.get_wav_data()
+        with wave.open(tmp_path, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)  # 16-bit
+            wf.setframerate(sample_rate)
+            wf.writeframes(wav_data)
+        
+        logger.info(f"Microphone recording saved: {tmp_path}")
+        return tmp_path
+    except Exception as e:
+        logger.error(f"Microphone recording failed: {e}")
+        return None

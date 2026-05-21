@@ -32,6 +32,16 @@ from theme import FONT_SIZE_SM, FONT_SIZE_MD, FONT_SIZE_LG, FONT_SIZE_XL
 from theme import SPACING_SM, SPACING_MD, SPACING_LG, SPACING_XL
 from neon_theme import TEXT_NEON_CYAN, TEXT_NEON_WHITE, TEXT_MUTED, FONT_MONO
 
+# Голосовые модули
+from live_avatar import AnimatedAvatarWidget
+from voice_assistant import speak, _init_player
+from voice_commands import parse_command
+from command_actions import process_command
+from stt_engine import (
+    transcribe_with_whisper, transcribe_with_google,
+    record_from_mic, WHISPER_AVAILABLE, SR_AVAILABLE
+)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -382,9 +392,83 @@ class MainWindow(QMainWindow):
     def setup_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
+        main_layout = QHBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        # Tabs
+        # === LEFT PANEL: Avatar + voice control ===
+        left_panel = QWidget()
+        left_panel.setFixedWidth(220)
+        left_panel.setStyleSheet(f"""
+            QWidget {{
+                background-color: {BG_SURFACE};
+                border-right: 1px solid {BORDER_STANDARD};
+            }}
+        """)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        left_layout.setContentsMargins(12, 16, 12, 16)
+        left_layout.setSpacing(12)
+
+        # Avatar
+        self.avatar_widget = AnimatedAvatarWidget()
+        left_layout.addWidget(self.avatar_widget, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Status
+        self.avatar_status = QLabel("● В сети")
+        self.avatar_status.setStyleSheet(f"color: {BRAND_GREEN}; font-size: 11px;")
+        left_layout.addWidget(self.avatar_status, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Mic button
+        self.mic_btn = QPushButton("🎤 Говорить")
+        self.mic_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mic_btn.setMinimumHeight(44)
+        self.mic_btn.setObjectName("primary")
+        self.mic_btn.clicked.connect(self.on_mic_click)
+        left_layout.addWidget(self.mic_btn)
+
+        # Voice status
+        self.voice_status = QLabel("")
+        self.voice_status.setStyleSheet(f"color: {TEXT_TERTIARY}; font-size: 11px;")
+        self.voice_status.setWordWrap(True)
+        self.voice_status.setMaximumWidth(190)
+        left_layout.addWidget(self.voice_status, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Voice transcription display
+        self.transcript_label = QLabel("")
+        self.transcript_label.setStyleSheet(f"""
+            color: {TEXT_NEON_CYAN}; font-size: 13px; font-weight: 600;
+            background: rgba(100, 200, 255, 0.06);
+            border-radius: 8px;
+            padding: 8px;
+        """)
+        self.transcript_label.setWordWrap(True)
+        self.transcript_label.setMaximumWidth(190)
+        self.transcript_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.transcript_label.hide()
+        left_layout.addWidget(self.transcript_label, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # STT status
+        stt_status = []
+        if WHISPER_AVAILABLE:
+            stt_status.append("Whisper")
+        if SR_AVAILABLE:
+            stt_status.append("Google")
+        if stt_status:
+            stt_info = QLabel(f"🎤 {' + '.join(stt_status)}")
+            stt_info.setStyleSheet(f"color: {TEXT_QUATERNARY}; font-size: 9px;")
+            stt_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            left_layout.addWidget(stt_info)
+
+        left_layout.addStretch()
+        main_layout.addWidget(left_panel)
+
+        # === RIGHT: Tabs ===
+        right_widget = QWidget()
+        right_widget.setStyleSheet(f"background: {BG_PRIMARY};")
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+
         self.tabs = QTabWidget()
         self.tabs.setFont(QFont("Segoe UI", 10))
         self.tabs.currentChanged.connect(self.on_tab_changed)
@@ -406,8 +490,9 @@ class MainWindow(QMainWindow):
         # Tab 4: Focus
         self.focus_widget = FocusWidget()
         self.tabs.addTab(self.focus_widget, "🎯 Фокус")
-        
-        layout.addWidget(self.tabs)
+
+        right_layout.addWidget(self.tabs)
+        main_layout.addWidget(right_widget, stretch=1)
 
     def setup_schedule_tab(self, layout):
         # Top bar
@@ -879,6 +964,200 @@ class FocusWidget(QWidget):
             
         except Exception as e:
             logger.warning(f"Motivation refresh failed: {e}")
+
+    # ============================================================
+    # ГОЛОСОВОЙ АССИСТЕНТ — запись → STT → NLU → действие → TTS
+    # ============================================================
+    
+    def on_mic_click(self):
+        """Обработчик кнопки микрофона — запуск голосового ввода."""
+        if hasattr(self, '_voice_active') and self._voice_active:
+            self.voice_status.setText("Уже слушаю... Подожди")
+            return
+        
+        self._voice_active = True
+        self.mic_btn.setEnabled(False)
+        self.mic_btn.setText("🎤 Слушаю...")
+        self.voice_status.setText("🎙️ Говори команду...")
+        self.transcript_label.hide()
+        
+        self.avatar_widget.set_mood("thinking")
+        
+        import threading
+        thread = threading.Thread(target=self._voice_loop, daemon=True)
+        thread.start()
+    
+    def _voice_loop(self):
+        """Полный пайплайн: запись → распознавание → понимание → действие → ответ."""
+        import time
+        
+        try:
+            # === ШАГ 1: Запись с микрофона ===
+            self._safe_status("🎙️ Слушаю...")
+            audio_path = record_from_mic(duration=5)
+            
+            if not audio_path:
+                self._safe_status("❌ Микрофон не работает. Проверь подключение.")
+                self._safe_avatar_stop()
+                return
+            
+            # === ШАГ 2: Распознавание речи ===
+            self._safe_status("🧠 Распознаю речь...")
+            text = None
+            
+            if WHISPER_AVAILABLE:
+                text = transcribe_with_whisper(audio_path)
+            
+            if text is None and SR_AVAILABLE:
+                text = transcribe_with_google(audio_path)
+            
+            # Cleanup temp file
+            try:
+                import os
+                os.remove(audio_path)
+            except:
+                pass
+            
+            if not text:
+                self._safe_status("🤷 Не расслышал. Попробуй ещё раз.")
+                self._safe_avatar_stop()
+                return
+            
+            text = text.strip().lower()
+            logger.info(f"STT result: '{text}'")
+            
+            # Показываем распознанный текст
+            self._safe_transcript(text)
+            
+            # === ШАГ 3: NLU — понимание команды ===
+            self._safe_status("🤔 Анализирую команду...")
+            command = parse_command(text)
+            
+            action = command.get("action", "unknown")
+            confidence = command.get("confidence", 0)
+            logger.info(f"NLU: action={action}, confidence={confidence}")
+            
+            if confidence < 0.2:
+                self._safe_status(f"❓ Не понял команду: \"{text[:50]}\"")
+                self._safe_speak("Извини, я не понял команду. Попробуй сказать по-другому.")
+                self._safe_avatar_stop()
+                return
+            
+            # === ШАГ 4: Выполнение действия ===
+            self._safe_status(f"⚡ Выполняю: {action}")
+            response = process_command(command)
+            
+            result_text = response.get("text", "Готово!")
+            success = response.get("success", True)
+            
+            # === ШАГ 5: TTS ответ ===
+            if success:
+                self._safe_speak(result_text)
+                self._safe_status(f"✅ {result_text[:60]}")
+                
+                # Аватар улыбается
+                self._safe_avatar_mood("happy")
+            else:
+                self._safe_speak(f"Не получилось: {result_text[:80]}")
+                self._safe_status(f"❌ {result_text[:60]}")
+            
+            # === ШАГ 6: Обновление GUI ===
+            self._safe_refresh()
+            
+            # Отключаем анимацию рта через 2 секунды
+            time.sleep(2)
+            
+        except Exception as e:
+            logger.error(f"Voice loop error: {e}")
+            self._safe_status(f"⚠️ Ошибка: {str(e)[:50]}")
+        finally:
+            self._voice_active = False
+            self._safe_mic_reset()
+            self._safe_avatar_stop()
+    
+    # ---- Thread-safe helpers ----
+    
+    def _safe_status(self, text: str):
+        """Thread-safe обновление статуса голоса."""
+        from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
+        try:
+            QMetaObject.invokeMethod(
+                self.voice_status, "setText",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, text)
+            )
+        except RuntimeError:
+            pass  # C++ object deleted
+    
+    def _safe_transcript(self, text: str):
+        """Thread-safe показ распознанного текста."""
+        from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
+        try:
+            QMetaObject.invokeMethod(
+                self.transcript_label, "setText",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, f'"{text}"')
+            )
+            QMetaObject.invokeMethod(
+                self.transcript_label, "show",
+                Qt.ConnectionType.QueuedConnection
+            )
+        except RuntimeError:
+            pass
+    
+    def _safe_speak(self, text: str):
+        """Thread-safe TTS в фоновом потоке."""
+        try:
+            # Включаем анимацию рта перед речью
+            self.avatar_widget.set_speaking.emit(True)
+            speak(text)
+        except Exception as e:
+            logger.warning(f"TTS failed: {e}")
+        finally:
+            self.avatar_widget.set_speaking.emit(False)
+    
+    def _safe_avatar_stop(self):
+        """Thread-safe остановка анимации рта аватара."""
+        try:
+            self.avatar_widget.set_speaking.emit(False)
+            self.avatar_widget.set_mood("neutral")
+        except RuntimeError:
+            pass
+    
+    def _safe_avatar_mood(self, mood: str):
+        """Thread-safe смена настроения аватара."""
+        try:
+            self.avatar_widget.set_mood(mood)
+        except RuntimeError:
+            pass
+    
+    def _safe_mic_reset(self):
+        """Thread-safe сброс кнопки микрофона."""
+        from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
+        try:
+            QMetaObject.invokeMethod(
+                self.mic_btn, "setEnabled",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(bool, True)
+            )
+            QMetaObject.invokeMethod(
+                self.mic_btn, "setText",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, "🎤 Говорить")
+            )
+        except RuntimeError:
+            pass
+    
+    def _safe_refresh(self):
+        """Thread-safe обновление таблицы."""
+        from PyQt6.QtCore import QMetaObject, Qt
+        try:
+            QMetaObject.invokeMethod(
+                self, "refresh_table",
+                Qt.ConnectionType.QueuedConnection
+            )
+        except RuntimeError:
+            pass
 
 
 def main():
