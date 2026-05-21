@@ -188,6 +188,8 @@ PREFIXES = [
 
 def _normalize(text: str) -> str:
     """Normalize text: lowercase, remove filler words."""
+    if not text:
+        return ""
     text = text.lower().strip()
     # Remove filler words
     pattern = r'\b(' + '|'.join(FILLER_WORDS) + r')\b'
@@ -200,7 +202,8 @@ def _normalize(text: str) -> str:
     # Clean up
     text = re.sub(r'\s+', ' ', text).strip()
     text = re.sub(r'[^\w\s\-\d:]', '', text)
-    return text
+    
+    return text if text else ""
 
 
 def _extract_time(text: str) -> tuple[str | None, str]:
@@ -302,6 +305,9 @@ def _extract_date(text: str) -> tuple[str | None, str]:
 
 def extract_task_text(original: str, normalized: str) -> str:
     """Extract meaningful task text from the command."""
+    if not normalized:
+        return original.capitalize() if original else ""
+    
     # Remove action words
     for word_list in [CREATE_VERBS, DELETE_VERBS, LIST_VERBS, UPDATE_VERBS, 
                       COMPLETE_VERBS, GOAL_VERBS, PROGRESS_VERBS, HELP_PHRASES,

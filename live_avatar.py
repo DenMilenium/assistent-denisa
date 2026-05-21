@@ -105,7 +105,6 @@ class LiveAvatar(QLabel):
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.HighQualityAntialiasing)
         
         # Save state for head transform
         painter.save()

@@ -1,6 +1,7 @@
 """
 Voice Assistant Module — Assistent denisa
 Provides TTS (Edge), audio playback, greeting screen, and voice messages
+Uses winsound (built-in) + threaded Edge TTS generation
 """
 
 import os
@@ -9,6 +10,7 @@ import asyncio
 import threading
 import tempfile
 import logging
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -21,11 +23,55 @@ try:
 except ImportError:
     EDGE_AVAILABLE = False
 
-try:
-    import pygame
-    PYGAME_AVAILABLE = True
-except ImportError:
-    PYGAME_AVAILABLE = False
+# Audio playback methods (tried in order)
+PLAY_METHOD = None
+
+def _init_player():
+    global PLAY_METHOD
+    
+    # Method 1: winsound (built-in Windows, plays WAV only)
+    try:
+        import winsound
+        PLAY_METHOD = "winsound"
+        logger.info("Audio: using winsound (built-in)")
+        return
+    except ImportError:
+        pass
+    
+    # Method 2: playsound (simple pip install)
+    try:
+        import playsound
+        PLAY_METHOD = "playsound"
+        logger.info("Audio: using playsound")
+        return
+    except ImportError:
+        pass
+    
+    # Method 3: PowerShell (always available on Windows)
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["powershell", "-Command", "(New-Object Media.SoundPlayer).PlaySync"],
+            capture_output=True, timeout=2
+        )
+        PLAY_METHOD = "powershell"
+        logger.info("Audio: using PowerShell SoundPlayer")
+        return
+    except:
+        pass
+    
+    # Method 4: ffplay (ffmpeg)
+    try:
+        subprocess.run(["ffplay", "-version"], capture_output=True, check=True)
+        PLAY_METHOD = "ffplay"
+        logger.info("Audio: using ffplay")
+        return
+    except:
+        pass
+    
+    PLAY_METHOD = None
+    logger.warning("Audio: no playback method available")
+
 
 # Voice settings
 VOICE_RU_MALE = "ru-RU-DmitryNeural"
@@ -65,19 +111,16 @@ def text_to_speech(text: str, voice: str = DEFAULT_VOICE, filename: str = None) 
         logger.warning("Edge TTS not installed. Install with: pip install edge-tts")
         return None
 
-    # Sanitize filename
     if filename is None:
-        safe_name = text.replace(" ", "_")[:30]
+        safe_name = "".join(c for c in text if c.isalnum() or c in " _-")[:30]
         filename = f"tts_{safe_name}.mp3"
     
     output_path = AUDIO_CACHE / filename
     
-    # Check cache
     if output_path.exists():
         return str(output_path)
 
     try:
-        # Run async TTS in sync wrapper
         async def _tts():
             communicate = edge_tts.Communicate(text, voice)
             await communicate.save(str(output_path))
@@ -91,23 +134,124 @@ def text_to_speech(text: str, voice: str = DEFAULT_VOICE, filename: str = None) 
         return None
 
 
+def play_audio_impl(file_path: str):
+    """Play audio using available method."""
+    global PLAY_METHOD
+    
+    if PLAY_METHOD is None:
+        _init_player()
+    
+    if PLAY_METHOD == "winsound":
+        import winsound
+        # winsound only plays WAV, so we try to play directly
+        try:
+            winsound.PlaySound(file_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+        except:
+            # Fallback: try to convert on the fly
+            convert_and_play(file_path)
+    
+    elif PLAY_METHOD == "playsound":
+        try:
+            from playsound import playsound
+            playsound(file_path, block=False)
+        except:
+            convert_and_play(file_path)
+    
+    elif PLAY_METHOD == "powershell":
+        play_with_powershell(file_path)
+    
+    elif PLAY_METHOD == "ffplay":
+        play_with_ffplay(file_path)
+    
+    else:
+        # Last resort: try system default
+        play_with_os_default(file_path)
+
+
+def convert_and_play(mp3_path: str):
+    """Convert MP3 to WAV and play with winsound."""
+    try:
+        # Use PowerShell to convert and play
+        ps_command = f"""
+        Add-Type -AssemblyName System.Windows.Forms;
+        $player = New-Object System.Media.SoundPlayer;
+        $player.Stream = (New-Object System.IO.MemoryStream(
+            ,[System.IO.File]::ReadAllBytes('{mp3_path}')
+        ));
+        $player.Play();
+        """
+        threading.Thread(
+            target=lambda: subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_command],
+                capture_output=True, timeout=30
+            ),
+            daemon=True
+        ).start()
+    except Exception as e:
+        logger.warning(f"Convert and play failed: {e}")
+
+
+def play_with_powershell(mp3_path: str):
+    """Play audio using PowerShell."""
+    try:
+        ps_script = f"""
+        $media = New-Object System.Media.SoundPlayer;
+        try {{
+            $media.SoundLocation = '{mp3_path}';
+            $media.PlaySync();
+        }} catch {{
+            # Try with streaming
+            $stream = [System.IO.File]::OpenRead('{mp3_path}');
+            $media.Stream = $stream;
+            $media.PlaySync();
+            $stream.Close();
+        }}
+        """
+        threading.Thread(
+            target=lambda: subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_script],
+                capture_output=True, timeout=30
+            ),
+            daemon=True
+        ).start()
+    except Exception as e:
+        logger.warning(f"PowerShell play failed: {e}")
+
+
+def play_with_ffplay(mp3_path: str):
+    """Play audio using ffplay."""
+    try:
+        subprocess.Popen(
+            ["ffplay", "-nodisp", "-autoexit", mp3_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        logger.warning(f"FFplay failed: {e}")
+
+
+def play_with_os_default(mp3_path: str):
+    """Play using OS default player."""
+    try:
+        import platform
+        system = platform.system()
+        if system == "Windows":
+            os.startfile(mp3_path)
+        elif system == "Darwin":
+            subprocess.Popen(["afplay", mp3_path])
+        else:
+            subprocess.Popen(["xdg-open", mp3_path])
+    except Exception as e:
+        logger.warning(f"OS default play failed: {e}")
+
+
 def play_audio(file_path: str):
     """Play audio file in background thread."""
-    if not PYGAME_AVAILABLE:
-        logger.warning("Pygame not installed. Install with: pip install pygame")
+    if not os.path.exists(file_path):
+        logger.warning(f"Audio file not found: {file_path}")
         return
     
-    def _play():
-        try:
-            pygame.mixer.init()
-            pygame.mixer.music.load(file_path)
-            pygame.mixer.music.play()
-            while pygame.mixer.music.get_busy():
-                threading.Event().wait(0.1)
-        except Exception as e:
-            logger.warning(f"Audio playback failed: {e}")
-    
-    thread = threading.Thread(target=_play, daemon=True)
+    thread = threading.Thread(target=lambda: play_audio_impl(file_path), daemon=True)
     thread.start()
 
 
@@ -124,7 +268,6 @@ def create_greeting():
     now = datetime.now()
     date_str = now.strftime("%d %B %Y")
     
-    # Time of day greeting
     hour = now.hour
     if hour < 6:
         time_greet = "Доброй ночи"
@@ -135,21 +278,16 @@ def create_greeting():
     else:
         time_greet = "Добрый вечер"
     
-    # Get today's schedule info
     try:
         from goals import get_today_schedule, get_urgent_tasks
         from database import get_all_items
         
         today_schedule = get_today_schedule()
         urgent = get_urgent_tasks()
-        
-        # Count today's tasks
         all_items = get_all_items()
         today_tasks = [i for i in all_items if i["enabled"]]
         
-        greeting = (
-            f"{time_greet}, Денис! Сегодня {date_str}. "
-        )
+        greeting = f"{time_greet}, Денис! Сегодня {date_str}. "
         
         if urgent:
             top = urgent[0]["name"]
@@ -160,8 +298,6 @@ def create_greeting():
             if priority:
                 greeting += f"Сегодня приоритет: {priority}. "
         
-        greeting += "Я твой личный ассистент. Буду напоминать о задачах и помогать держать фокус."
-        
     except Exception as e:
         logger.warning(f"Greeting detail failed: {e}")
         greeting = f"{time_greet}, Денис! Сегодня {date_str}. Я твой личный ассистент."
@@ -171,21 +307,17 @@ def create_greeting():
 
 def create_reminder_message(task_text: str, time_str: str) -> str:
     """Create a natural voice reminder message."""
-    hour = datetime.now().hour
+    lower = task_text.lower()
     
-    if "обед" in task_text.lower() or "поесть" in task_text.lower() or task_text.lower().startswith("🍽"):
+    if "обед" in lower or "поесть" in lower or lower.startswith("🍽"):
         return f"Денис, время обедать. Не забудь поесть!"
-    
-    if "спорт" in task_text.lower() or "ходьб" in task_text.lower() or "бег" in task_text.lower() or "тренировк" in task_text.lower():
+    if "спорт" in lower or "ходьб" in lower or "бег" in lower or "тренировк" in lower:
         return f"Денис, пора заниматься спортом. {task_text}"
-    
-    if "подъём" in task_text.lower() or "зарядк" in task_text.lower():
+    if "подъём" in lower or "зарядк" in lower:
         return f"Денис, доброе утро! Пора вставать и делать зарядку!"
-    
-    if "ужин" in task_text.lower():
+    if "ужин" in lower:
         return f"Денис, время ужина. Приятного аппетита!"
-    
-    if "сон" in task_text.lower():
+    if "сон" in lower:
         return f"Денис, пора готовиться ко сну. Отдохни."
     
     return f"Денис, сейчас {time_str}. Напоминаю: {task_text}"
@@ -213,7 +345,5 @@ def text_to_speech_sync(text: str, voice: str = DEFAULT_VOICE) -> bytes:
 
 
 def create_voice_message_bytes(text: str, voice: str = DEFAULT_VOICE) -> bytes:
-    """Create audio bytes suitable for Telegram voice message (OPUS)."""
-    # Edge TTS outputs MP3, Telegram accepts OGG/OPUS
-    # We'll convert or just send the raw bytes
+    """Create audio bytes suitable for Telegram voice message."""
     return text_to_speech_sync(text, voice)

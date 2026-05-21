@@ -30,7 +30,7 @@ from theme import BRAND_ACCENT, BRAND_GREEN, BRAND_RED, BRAND_ORANGE
 from theme import BORDER_SUBTLE, BORDER_STANDARD, BORDER_SOLID
 from theme import FONT_SIZE_SM, FONT_SIZE_MD, FONT_SIZE_LG, FONT_SIZE_XL
 from theme import SPACING_SM, SPACING_MD, SPACING_LG, SPACING_XL
-from neon_theme import TEXT_NEON_CYAN, TEXT_NEON_WHITE, TEXT_MUTED
+from neon_theme import TEXT_NEON_CYAN, TEXT_NEON_WHITE, TEXT_MUTED, FONT_MONO
 
 logging.basicConfig(
     level=logging.INFO,
@@ -313,7 +313,7 @@ class GoalsWidget(QWidget):
             if i < len(data.get("goals", [])):
                 goal = data["goals"][i]
                 pct = goal.get("progress", 0)
-                label.setText(goal["name"])
+                label.setText(str(goal["name"]))
                 label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 13px; font-weight: 500;")
                 bar.setValue(int(pct))
                 bar.setFormat(f"{int(pct)}%")

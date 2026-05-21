@@ -39,8 +39,8 @@ def load_all_goals():
     for row in ws.iter_rows(min_row=7, max_row=12, values_only=True):
         if row[1]:
             goals.append({
-                "id": row[0],
-                "name": row[1],
+                "id": row[0] if row[0] else 0,
+                "name": str(row[1]) if row[1] else "",
                 "deadline": str(row[2]) if row[2] else "",
                 "status": str(row[3]) if row[3] else "",
                 "progress": _parse_progress(row[4]),
@@ -68,7 +68,16 @@ def load_all_goals():
     ws = wb["Расписание дня"]
     schedule = []
     for row in ws.iter_rows(min_row=6, max_row=70, values_only=True):
-        if row[0] and isinstance(row[0], datetime):
+        if not row[0]:
+            continue
+        date_val = row[0]
+        # Handle both datetime objects and string dates
+        if isinstance(date_val, str):
+            try:
+                date_val = datetime.strptime(date_val, "%d.%m.%Y")
+            except ValueError:
+                continue
+        if isinstance(date_val, datetime):
             schedule.append({
                 "date": row[0],
                 "day": str(row[1]) if row[1] else "",

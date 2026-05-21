@@ -146,13 +146,8 @@ class GreetingOverlay(QWidget):
         # Speak greeting in background thread
         def _speak():
             try:
-                # Activate mouth animation
-                from PyQt6.QtCore import QMetaObject, Qt
-                QMetaObject.invokeMethod(
-                    self.avatar_widget.avatar, "set_speaking",
-                    Qt.ConnectionType.QueuedConnection,
-                    True
-                )
+                # Activate mouth animation via direct call
+                self.avatar_widget.avatar.set_speaking(True)
                 
                 file_path = text_to_speech(greeting_text)
                 if file_path:
@@ -161,11 +156,7 @@ class GreetingOverlay(QWidget):
                     play_audio(file_path)
                 
                 # Stop mouth animation
-                QMetaObject.invokeMethod(
-                    self.avatar_widget.avatar, "set_speaking",
-                    Qt.ConnectionType.QueuedConnection,
-                    False
-                )
+                self.avatar_widget.avatar.set_speaking(False)
             except Exception as e:
                 logger.warning(f"Greeting speech failed: {e}")
         
