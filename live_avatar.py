@@ -213,7 +213,7 @@ class LiveAvatar(QLabel):
         painter.drawEllipse(QPointF(head_cx, head_cy), head_w, head_h)
         
         # Head outline (neon wireframe)
-        head_pen = QPen(QColor(180, 130, 255, 120 + 60 * self.glow_pulse), 1.5)
+        head_pen = QPen(QColor(180, 130, 255, int(120 + 60 * self.glow_pulse)), 1.5)
         painter.setPen(head_pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawEllipse(QPointF(head_cx, head_cy), head_w, head_h)
