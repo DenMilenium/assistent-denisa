@@ -29,42 +29,25 @@ PLAY_METHOD = None
 def _init_player():
     global PLAY_METHOD
     
-    # Method 1: winsound (built-in Windows, plays WAV only)
+    # Method 1: winsound (built-in Windows, plays WAV)
+    # BUT winsound doesn't play MP3. We pair it with PowerShell conversion.
     try:
         import winsound
         PLAY_METHOD = "winsound"
-        logger.info("Audio: using winsound (built-in)")
+        logger.info("Audio: using winsound (built-in) + PowerShell conversion")
         return
     except ImportError:
         pass
     
-    # Method 2: playsound (simple pip install)
-    try:
-        import playsound
-        PLAY_METHOD = "playsound"
-        logger.info("Audio: using playsound")
-        return
-    except ImportError:
-        pass
-    
-    # Method 3: PowerShell (always available on Windows)
+    # Method 2: PowerShell media playback (always works on Windows 10+)
     try:
         import subprocess
         result = subprocess.run(
-            ["powershell", "-Command", "(New-Object Media.SoundPlayer).PlaySync"],
+            ["powershell", "-Command", "(New-Object Media.SoundPlayer).PlaySync()"],
             capture_output=True, timeout=2
         )
         PLAY_METHOD = "powershell"
         logger.info("Audio: using PowerShell SoundPlayer")
-        return
-    except:
-        pass
-    
-    # Method 4: ffplay (ffmpeg)
-    try:
-        subprocess.run(["ffplay", "-version"], capture_output=True, check=True)
-        PLAY_METHOD = "ffplay"
-        logger.info("Audio: using ffplay")
         return
     except:
         pass
@@ -192,30 +175,29 @@ def convert_and_play(mp3_path: str):
 
 
 def play_with_powershell(mp3_path: str):
-    """Play audio using PowerShell."""
+    """Play audio using PowerShell Media Player (plays any format)."""
     try:
-        ps_script = f"""
-        $media = New-Object System.Media.SoundPlayer;
-        try {{
-            $media.SoundLocation = '{mp3_path}';
-            $media.PlaySync();
-        }} catch {{
-            # Try with streaming
-            $stream = [System.IO.File]::OpenRead('{mp3_path}');
-            $media.Stream = $stream;
-            $media.PlaySync();
-            $stream.Close();
-        }}
-        """
+        # PowerShell script that uses Media Player to play MP3
+        ps_script = f'''
+$path = "{mp3_path}"
+$player = New-Object -ComObject MediaPlayer.MediaPlayer
+$player.Open($path)
+$player.Play()
+# Wait for playback
+Start-Sleep -Milliseconds 200
+while ($player.Status -eq 3) {{ Start-Sleep -Milliseconds 100 }}
+'''
         threading.Thread(
             target=lambda: subprocess.run(
                 ["powershell", "-NoProfile", "-Command", ps_script],
-                capture_output=True, timeout=30
+                capture_output=True, timeout=60
             ),
             daemon=True
         ).start()
     except Exception as e:
-        logger.warning(f"PowerShell play failed: {e}")
+        logger.warning(f"PowerShell media play failed: {e}")
+        # Final fallback
+        play_with_os_default(mp3_path)
 
 
 def play_with_ffplay(mp3_path: str):
