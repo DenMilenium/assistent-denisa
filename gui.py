@@ -1004,16 +1004,19 @@ class MainWindow(QMainWindow):
     
     def on_mic_click(self):
         """Toggle continuous voice dialog on/off."""
-        if hasattr(self, '_voice_active') and self._voice_active:
+        if getattr(self, '_voice_active', False):
             self._voice_active = False
-            self._safe_status("⏹️ Стоп")
-            self._safe_mic_reset()
+            self.mic_btn.setText("🎤 Говорить")
+            self.mic_btn.setEnabled(True)
+            self._safe_status("⏹️ Остановлен")
+            self._safe_avatar_stop()
             return
         
         self._voice_active = True
+        self._input_result = None
         self.mic_btn.setEnabled(False)
         self.mic_btn.setText("⏹️ Стоп")
-        self.voice_status.setText("🎙️ Слушаю...")
+        self.voice_status.setText("🎙️ Слушаю непрерывно...")
         self.transcript_label.hide()
         self.avatar_widget.set_mood("thinking")
         
