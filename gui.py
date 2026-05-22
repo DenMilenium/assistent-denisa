@@ -1102,10 +1102,19 @@ class MainWindow(QMainWindow):
                 if success:
                     self._safe_speak(result_text)
                     self._safe_status(f"✅ {result_text[:60]}")
-                    self._safe_avatar_mood("happy")
+                    # Set mood based on action/context
+                    if action in ("add_task", "add_schedule", "complete"):
+                        self._safe_avatar_mood("happy")
+                    elif action == "list_tasks":
+                        self._safe_avatar_mood("neutral")
+                    elif action == "delete_task":
+                        self._safe_avatar_mood("neutral")
+                    else:
+                        self._safe_avatar_mood("happy")
                 else:
                     self._safe_speak(f"Не смог: {result_text[:80]}")
                     self._safe_status(f"❌ {result_text[:60]}")
+                    self._safe_avatar_mood("neutral")
                 
                 self._safe_refresh()
                 time.sleep(1.5)
