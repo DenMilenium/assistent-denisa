@@ -518,10 +518,28 @@ def _semantic_match(text: str) -> dict:
         remaining = text
         for pat in DELETE_VERBS:
             remaining = remaining.replace(pat, "")
-        remaining = re.sub(r'\b(задачу|задачи|дело|напоминание|встречу)\b', '', remaining)
+        remaining = re.sub(r'\b(задачу|задачи|дело|напоминание|встречу|выбранные|выбранную|выбранных|все)\b', '', remaining)
         remaining = re.sub(r'\s+', ' ', remaining).strip()
         if remaining:
             params["text"] = remaining
+        else:
+            # If no specific task text left, send "last" marker
+            params["text"] = "последняя"
+    
+    if best_action == ACTION_COMPLETE:
+        remaining = text
+        for pat in COMPLETE_VERBS:
+            remaining = remaining.replace(pat, "")
+        remaining = re.sub(r'\b(задачу|задачи|дело|напоминание|встречу|номер|№)\b', '', remaining)
+        # Extract number reference: "задачу 1"
+        number_match = re.search(r'(\d+)', remaining)
+        if number_match:
+            params["number"] = int(number_match.group(1))
+            remaining = re.sub(r'\d+', '', remaining)
+        remaining = re.sub(r'\s+', ' ', remaining).strip()
+        if remaining:
+            params["text"] = remaining
+        # If empty, _handle_complete will mark the most recent/enabled task
     
     confidence = min(best_score / 5.0, 0.99)
     confidence = max(confidence, 0.2)

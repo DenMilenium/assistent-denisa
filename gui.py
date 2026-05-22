@@ -791,62 +791,57 @@ class MainWindow(QMainWindow):
     # ============================================================
     
     def on_mic_click(self):
-        """Обработчик кнопки микрофона — запуск голосового ввода."""
-        if hasattr(self, '_voice_active') and self._voice_active:
-            self.voice_status.setText("Уже слушаю... Подожди")
+        """Обработчик кнопки микрофона — запуск/остановка голосового ввода."""
+        if getattr(self, '_voice_active', False):
+            # Stop voice loop — set flag and let thread exit
+            self._voice_active = False
+            self.mic_btn.setText("🎤 Говорить")
+            self.mic_btn.setEnabled(True)
+            self.voice_status.setText("⏹️ Остановлен")
+            self._safe_avatar_stop()
             return
         
         self._voice_active = True
-        self._input_result = None  # для текстового fallback
+        self._input_result = None
         self.mic_btn.setEnabled(False)
-        self.mic_btn.setText("🎤 Слушаю...")
-        self.voice_status.setText("🎙️ Говори команду...")
+        self.mic_btn.setText("⏹️ Стоп")
+        self.voice_status.setText("🎙️ Слушаю непрерывно...")
         self.transcript_label.hide()
-        
         self.avatar_widget.set_mood("thinking")
         
         thread = threading.Thread(target=self._voice_loop, daemon=True)
         thread.start()
     
     def _voice_loop(self):
-        """Полный пайплайн: запись → распознавание → понимание → действие → ответ."""
+        """Непрерывный цикл: запись → STT → NLU → действие → TTS → повтор."""
+        import time
+        import os as _os
         
         try:
-            # === ШАГ 1: Запись с микрофона ===
-            self._safe_status("🎙️ Слушаю...")
-            audio_path = record_from_mic(duration=5)
-            
-            if not audio_path:
-                # Fallback: если микрофон не работает — текстовый ввод
-                self._safe_status("⌨️ Введи команду...")
-                import time
-                time.sleep(0.3)
+            while self._voice_active:
+                self._safe_status("🎙️ Говори команду...")
                 
-                # Показываем диалог ввода из GUI-потока
-                self._input_requested = True
-                self._input_result = None
-                
-                # Ждём пока пользователь введёт текст (таймаут 60 сек)
-                timeout = 60
-                while timeout > 0 and self._input_result is None:
-                    time.sleep(0.5)
-                    timeout -= 0.5
-                
-                text = self._input_result or ""
+                # SHAG 1: Zapis s mikrofona
                 audio_path = None
+                for attempt in range(3):
+                    if not self._voice_active:
+                        break
+                    audio_path = record_from_mic(duration=10)
+                    if audio_path:
+                        break
+                    if attempt < 2:
+                        time.sleep(0.3)
                 
-                if not text:
-                    self._safe_status("❌ Команда не введена")
-                    self._safe_avatar_stop()
-                    return
+                if not self._voice_active:
+                    break
                 
-                text = text.strip().lower()
-                self._safe_transcript(text)
-                logger.info(f"Text input: '{text}'")
-                self._safe_status(f"✏️ {text[:50]}...")
-            else:
-                # === ШАГ 2: Распознавание речи ===
-                self._safe_status("🧠 Распознаю речь...")
+                if not audio_path:
+                    self._safe_status("❌ Микрофон недоступен")
+                    self._safe_speak("Микрофон не работает. Проверь подключение.")
+                    break
+                
+                # SHAG 2: Raspoznavanie rechi (Whisper + Google fallback)
+                self._safe_status("🧠 Распознаю...")
                 text = None
                 
                 if WHISPER_AVAILABLE:
@@ -855,65 +850,63 @@ class MainWindow(QMainWindow):
                 if text is None and SR_AVAILABLE:
                     text = transcribe_with_google(audio_path)
                 
-                # Cleanup temp file
+                # Ochistka vremennogo fajla
                 try:
-                    import os
-                    os.remove(audio_path)
+                    _os.remove(audio_path)
                 except:
                     pass
-            
-            if not text:
-                self._safe_status("🤷 Не расслышал. Попробуй ещё раз.")
-                self._safe_avatar_stop()
-                return
-            
-            text = text.strip().lower()
-            logger.info(f"STT result: '{text}'")
-            
-            # Показываем распознанный текст
-            self._safe_transcript(text)
-            
-            # === ШАГ 3: NLU — понимание команды ===
-            self._safe_status("🤔 Анализирую команду...")
-            command = parse_command(text)
-            
-            action = command.get("action", "unknown")
-            confidence = command.get("confidence", 0)
-            logger.info(f"NLU: action={action}, confidence={confidence}")
-            
-            if confidence < 0.2:
-                self._safe_status(f"❓ Не понял команду: \"{text[:50]}\"")
-                self._safe_speak("Извини, я не понял команду. Попробуй сказать по-другому.")
-                self._safe_avatar_stop()
-                return
-            
-            # === ШАГ 4: Выполнение действия ===
-            self._safe_status(f"⚡ Выполняю: {action}")
-            response = process_command(command)
-            
-            result_text = response.get("text", "Готово!")
-            success = response.get("success", True)
-            
-            # === ШАГ 5: TTS ответ ===
-            if success:
-                self._safe_speak(result_text)
-                self._safe_status(f"✅ {result_text[:60]}")
                 
-                # Аватар улыбается
-                self._safe_avatar_mood("happy")
-            else:
-                self._safe_speak(f"Не получилось: {result_text[:80]}")
-                self._safe_status(f"❌ {result_text[:60]}")
-            
-            # === ШАГ 6: Обновление GUI ===
-            self._safe_refresh()
-            
-            # Отключаем анимацию рта через 2 секунды
-            time.sleep(2)
+                if not text:
+                    self._safe_status("🤷 Ne rasslyshal. Povtori...")
+                    time.sleep(1)
+                    continue
+                
+                text = text.strip().lower()
+                self._safe_transcript(text)
+                logger.info(f"STT: '{text}'")
+                
+                # Proverka na stop-slova
+                if text in ("стоп", "хватит", "замолчи", "отстань", "выйти",
+                            "exit", "stop", "quit", "закончить", "завершить",
+                            "прекрати", "остановись"):
+                    self._safe_speak("Хорошо, замолкаю.")
+                    break
+                
+                # SHAG 3: NLU
+                self._safe_status("🤔 Dumayu...")
+                command = parse_command(text)
+                action = command.get("action", "unknown")
+                confidence = command.get("confidence", 0)
+                
+                if confidence < 0.2:
+                    self._safe_speak("Ya ne ponyal. Skazhi eshchyo raz.")
+                    time.sleep(0.5)
+                    continue
+                
+                # SHAG 4: Vypolnenie dejstvija
+                response = process_command(command)
+                result_text = response.get("text", "Gotovo!")
+                success = response.get("success", True)
+                
+                # SHAG 5: TTS otvet
+                if success:
+                    self._safe_speak(result_text)
+                    self._safe_status(f"✅ {result_text[:60]}")
+                    if action in ("add_task", "add_schedule", "complete"):
+                        self._safe_avatar_mood("happy")
+                    else:
+                        self._safe_avatar_mood("happy")
+                else:
+                    self._safe_speak(f"Ne smog: {result_text[:80]}")
+                    self._safe_status(f"❌ {result_text[:60]}")
+                    self._safe_avatar_mood("neutral")
+                
+                self._safe_refresh()
+                time.sleep(1.5)
             
         except Exception as e:
             logger.error(f"Voice loop error: {e}")
-            self._safe_status(f"⚠️ Ошибка: {str(e)[:50]}")
+            self._safe_status(f"⚠️ Oshibka: {str(e)[:50]}")
         finally:
             self._voice_active = False
             self._safe_mic_reset()
@@ -946,8 +939,9 @@ class MainWindow(QMainWindow):
             speak(text)
         except Exception as e:
             logger.warning(f"TTS failed: {e}")
-        finally:
-            self.avatar_widget.avatar.set_speaking.emit(False)
+        # Анимация рта отключается через таймер (оставим на 0.5 сек после речи)
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(500, lambda: self.avatar_widget.avatar.set_speaking.emit(False))
     
     def _safe_avatar_stop(self):
         """Thread-safe остановка анимации рта аватара."""
@@ -997,117 +991,6 @@ class MainWindow(QMainWindow):
             else:
                 self._input_result = ""
 
-
-    # ============================================================
-    # ГОЛОСОВОЙ АССИСТЕНТ — непрерывный диалог
-    # ============================================================
-    
-    def on_mic_click(self):
-        """Toggle continuous voice dialog on/off."""
-        if getattr(self, '_voice_active', False):
-            self._voice_active = False
-            self.mic_btn.setText("🎤 Говорить")
-            self.mic_btn.setEnabled(True)
-            self._safe_status("⏹️ Остановлен")
-            self._safe_avatar_stop()
-            return
-        
-        self._voice_active = True
-        self._input_result = None
-        self.mic_btn.setEnabled(False)
-        self.mic_btn.setText("⏹️ Стоп")
-        self.voice_status.setText("🎙️ Слушаю непрерывно...")
-        self.transcript_label.hide()
-        self.avatar_widget.set_mood("thinking")
-        
-        import threading
-        thread = threading.Thread(target=self._voice_loop, daemon=True)
-        thread.start()
-    
-    def _voice_loop(self):
-        """Continuous loop: listen → STT → NLU → action → TTS → repeat."""
-        import time
-        
-        try:
-            while self._voice_active:
-                self._safe_status("🎙️ Говори команду...")
-                
-                audio_path = None
-                for attempt in range(3):
-                    audio_path = record_from_mic(duration=10)
-                    if audio_path:
-                        break
-                    if attempt < 2:
-                        time.sleep(0.3)
-                
-                if not audio_path:
-                    self._safe_status("❌ Микрофон недоступен")
-                    self._safe_speak("Микрофон не работает. Проверь подключение.")
-                    break
-                
-                self._safe_status("🧠 Распознаю...")
-                text = None
-                if 'SR_AVAILABLE' in dir():
-                    from stt_engine import transcribe_with_google
-                    text = transcribe_with_google(audio_path)
-                try:
-                    os.remove(audio_path)
-                except:
-                    pass
-                
-                if not text:
-                    self._safe_status("🤷 Не расслышал. Повтори...")
-                    time.sleep(1)
-                    continue
-                
-                text = text.strip().lower()
-                self._safe_transcript(text)
-                logger.info(f"STT: '{text}'")
-                
-                if text in ("стоп","хватит","замолчи","отстань","выйти","exit","stop","quit","закончить","завершить","прекрати","остановись"):
-                    self._safe_speak("Хорошо, замолкаю.")
-                    break
-                
-                self._safe_status("🤔 Думаю...")
-                command = parse_command(text)
-                action = command.get("action", "unknown")
-                confidence = command.get("confidence", 0)
-                
-                if confidence < 0.2:
-                    self._safe_speak("Я не понял. Скажи ещё раз.")
-                    time.sleep(0.5)
-                    continue
-                
-                response = process_command(command)
-                result_text = response.get("text", "Готово!")
-                success = response.get("success", True)
-                
-                if success:
-                    self._safe_speak(result_text)
-                    self._safe_status(f"✅ {result_text[:60]}")
-                    # Set mood based on action/context
-                    if action in ("add_task", "add_schedule", "complete"):
-                        self._safe_avatar_mood("happy")
-                    elif action == "list_tasks":
-                        self._safe_avatar_mood("neutral")
-                    elif action == "delete_task":
-                        self._safe_avatar_mood("neutral")
-                    else:
-                        self._safe_avatar_mood("happy")
-                else:
-                    self._safe_speak(f"Не смог: {result_text[:80]}")
-                    self._safe_status(f"❌ {result_text[:60]}")
-                    self._safe_avatar_mood("neutral")
-                
-                self._safe_refresh()
-                time.sleep(1.5)
-            
-        except Exception as e:
-            logger.error(f"Voice loop: {e}")
-        finally:
-            self._voice_active = False
-            self._safe_mic_reset()
-            self._safe_avatar_stop()
 
 class FocusWidget(QWidget):
     """Pomodoro focus timer + motivation tab."""

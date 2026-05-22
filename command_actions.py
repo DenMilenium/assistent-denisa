@@ -103,10 +103,6 @@ def _handle_goodbye() -> dict:
     return {"text": phrase, "success": True}
 
 
-def _handle_help() -> dict:
-    return {"text": get_help_text(), "success": True}
-
-
 def _handle_query(params: dict) -> dict:
     query = params.get("query", "")
     
@@ -127,7 +123,7 @@ def _handle_list_tasks(params: dict) -> dict:
         today_mask = 1 << datetime.now().weekday()
         items = [i for i in items if i["enabled"] and (i["days_mask"] & today_mask)]
     elif date_filter == "tomorrow":
-        tomorrow_mask = 1 << (datetime.now().weekday() + 1) % 7
+        tomorrow_mask = 1 << ((datetime.now().weekday() + 1) % 7)
         items = [i for i in items if i["enabled"] and (i["days_mask"] & tomorrow_mask)]
     
     return {"text": format_tasks_response(items), "success": True}
@@ -145,7 +141,7 @@ def _handle_add_schedule(params: dict) -> dict:
     if date_str == "today":
         mask = 1 << datetime.now().weekday()
     elif date_str == "tomorrow":
-        mask = 1 << (datetime.now().weekday() + 1) % 7
+        mask = 1 << ((datetime.now().weekday() + 1) % 7)
     elif date_str == "week":
         mask = 127  # All days
     else:
@@ -173,13 +169,19 @@ def _handle_add_schedule(params: dict) -> dict:
 def _handle_delete_task(params: dict) -> dict:
     task_text = params.get("text", "").lower()
     
-    if not task_text:
-        return {"text": "Какую задачу удалить? Уточни название.", "success": False}
-    
     items = database.get_all_items()
-    found = []
+    enabled_items = [i for i in items if i["enabled"]]
     
-    for item in items:
+    # Handle "последняя" marker — delete last enabled item
+    if not task_text or task_text == "последняя":
+        if not enabled_items:
+            return {"text": "Нет активных задач для удаления.", "success": False}
+        item = enabled_items[-1]
+        database.delete_item(item["id"])
+        return {"text": f"🗑️ Удалил последнюю задачу «{item['text']}» на {item['time']}.", "success": True}
+    
+    found = []
+    for item in enabled_items:
         if task_text in item["text"].lower():
             found.append(item)
     
@@ -234,8 +236,8 @@ def _handle_goal_progress(params: dict) -> dict:
         }
     else:
         return {
-            "text": f"Цель «{text}» не найдена. Вот твои цели:\n" + 
-                    "\n".join(f"• {g['name']}" for g in goals),
+            "text": f"Цель «{text}» не найдена. Вот твои цели:\\n" + 
+                    "\\n".join(f"• {g['name']}" for g in goals),
             "success": True
         }
 
@@ -249,20 +251,28 @@ def _handle_list_goals(params: dict) -> dict:
 def _handle_complete(params: dict) -> dict:
     """Mark a task as completed."""
     task_text = params.get("text", "").lower()
-    
-    if not task_text:
-        # Mark most recent task
-        items = database.get_all_items()
-        today = datetime.now().weekday()
-        for item in reversed(items):
-            if item["enabled"]:
-                from datetime import date
-                database.mark_completed(item["id"])
-                return {"text": f"✅ Отметил задачу «{item['text']}» как выполненную!", "success": True}
-        return {"text": "Нет активных задач для отметки.", "success": True}
+    task_number = params.get("number", None)
     
     items = database.get_all_items()
-    for item in items:
+    enabled_items = [i for i in items if i["enabled"]]
+    
+    if task_number is not None:
+        # Complete by number (1-indexed)
+        if task_number < 1 or task_number > len(enabled_items):
+            return {"text": f"Задача номер {task_number} не найдена. Всего активных задач: {len(enabled_items)}.", "success": False}
+        item = enabled_items[task_number - 1]
+        database.mark_completed(item["id"])
+        return {"text": f"✅ Отметил задачу «{item['text']}» как выполненную!", "success": True}
+    
+    if not task_text:
+        # Mark most recent enabled task
+        if not enabled_items:
+            return {"text": "Нет активных задач для отметки.", "success": True}
+        item = enabled_items[-1]
+        database.mark_completed(item["id"])
+        return {"text": f"✅ Отметил задачу «{item['text']}» как выполненную!", "success": True}
+    
+    for item in enabled_items:
         if task_text in item["text"].lower():
             database.mark_completed(item["id"])
             return {"text": f"✅ Отметил задачу «{item['text']}» как выполненную!", "success": True}
