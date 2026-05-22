@@ -805,13 +805,11 @@ class MainWindow(QMainWindow):
         
         self.avatar_widget.set_mood("thinking")
         
-        import threading
         thread = threading.Thread(target=self._voice_loop, daemon=True)
         thread.start()
     
     def _voice_loop(self):
         """Полный пайплайн: запись → распознавание → понимание → действие → ответ."""
-        import time
         
         try:
             # === ШАГ 1: Запись с микрофона ===
@@ -925,7 +923,6 @@ class MainWindow(QMainWindow):
     
     def _safe_status(self, text: str):
         """Thread-safe обновление статуса голоса."""
-        from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
         try:
             QMetaObject.invokeMethod(
                 self.voice_status, "setText",
@@ -937,7 +934,6 @@ class MainWindow(QMainWindow):
     
     def _safe_transcript(self, text: str):
         """Thread-safe показ распознанного текста."""
-        from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
         try:
             QMetaObject.invokeMethod(
                 self.transcript_label, "setText",
@@ -1021,6 +1017,105 @@ class MainWindow(QMainWindow):
             else:
                 self._input_result = ""
 
+
+    # ============================================================
+    # ГОЛОСОВОЙ АССИСТЕНТ — непрерывный диалог
+    # ============================================================
+    
+    def on_mic_click(self):
+        """Toggle continuous voice dialog on/off."""
+        if hasattr(self, '_voice_active') and self._voice_active:
+            self._voice_active = False
+            self._safe_status("⏹️ Стоп")
+            self._safe_mic_reset()
+            return
+        
+        self._voice_active = True
+        self.mic_btn.setEnabled(False)
+        self.mic_btn.setText("⏹️ Стоп")
+        self.voice_status.setText("🎙️ Слушаю...")
+        self.transcript_label.hide()
+        self.avatar_widget.set_mood("thinking")
+        
+        import threading
+        thread = threading.Thread(target=self._voice_loop, daemon=True)
+        thread.start()
+    
+    def _voice_loop(self):
+        """Continuous loop: listen → STT → NLU → action → TTS → repeat."""
+        import time
+        
+        try:
+            while self._voice_active:
+                self._safe_status("🎙️ Говори команду...")
+                
+                audio_path = None
+                for attempt in range(3):
+                    audio_path = record_from_mic(duration=10)
+                    if audio_path:
+                        break
+                    if attempt < 2:
+                        time.sleep(0.3)
+                
+                if not audio_path:
+                    self._safe_status("❌ Микрофон недоступен")
+                    self._safe_speak("Микрофон не работает. Проверь подключение.")
+                    break
+                
+                self._safe_status("🧠 Распознаю...")
+                text = None
+                if 'SR_AVAILABLE' in dir():
+                    from stt_engine import transcribe_with_google
+                    text = transcribe_with_google(audio_path)
+                try:
+                    os.remove(audio_path)
+                except:
+                    pass
+                
+                if not text:
+                    self._safe_status("🤷 Не расслышал. Повтори...")
+                    time.sleep(1)
+                    continue
+                
+                text = text.strip().lower()
+                self._safe_transcript(text)
+                logger.info(f"STT: '{text}'")
+                
+                if text in ("стоп","хватит","замолчи","отстань","выйти","exit","stop","quit","закончить","завершить","прекрати","остановись"):
+                    self._safe_speak("Хорошо, замолкаю.")
+                    break
+                
+                self._safe_status("🤔 Думаю...")
+                command = parse_command(text)
+                action = command.get("action", "unknown")
+                confidence = command.get("confidence", 0)
+                
+                if confidence < 0.2:
+                    self._safe_speak("Я не понял. Скажи ещё раз.")
+                    time.sleep(0.5)
+                    continue
+                
+                response = process_command(command)
+                result_text = response.get("text", "Готово!")
+                success = response.get("success", True)
+                
+                if success:
+                    self._safe_speak(result_text)
+                    self._safe_status(f"✅ {result_text[:60]}")
+                    self._safe_avatar_mood("happy")
+                else:
+                    self._safe_speak(f"Не смог: {result_text[:80]}")
+                    self._safe_status(f"❌ {result_text[:60]}")
+                
+                self._safe_refresh()
+                time.sleep(1.5)
+            
+        except Exception as e:
+            logger.error(f"Voice loop: {e}")
+        finally:
+            self._voice_active = False
+            self._safe_mic_reset()
+            self._safe_avatar_stop()
 
 class FocusWidget(QWidget):
     """Pomodoro focus timer + motivation tab."""

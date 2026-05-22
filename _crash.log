@@ -1,8 +1,0 @@
-=== Starting Assistent Denisa ===
-2026-05-22 01:46:29,607 [INFO] voice_assistant: Audio: using winsound (built-in) + PowerShell conversion
-Audio method: winsound
-C:\Users\sribn\Desktop\daily_reminder\venv\Lib\site-packages\openpyxl\worksheet\_reader.py:329: UserWarning: Unknown extension is not supported and will be removed
-  warn(msg)
-C:\Users\sribn\Desktop\daily_reminder\venv\Lib\site-packages\openpyxl\worksheet\_reader.py:329: UserWarning: Conditional Formatting extension is not supported and will be removed
-  warn(msg)
-2026-05-22 01:46:30,387 [INFO] reminder_engine: Reminder engine started

@@ -96,6 +96,7 @@ def _init_player():
 VOICE_RU_MALE = "ru-RU-DmitryNeural"
 VOICE_RU_FEMALE = "ru-RU-SvetlanaNeural"
 DEFAULT_VOICE = VOICE_RU_MALE
+TTS_RATE = "+20%"  # Faster speech
 
 # Audio cache directory
 AUDIO_CACHE = Path(os.path.dirname(os.path.abspath(__file__))) / "audio_cache"
@@ -141,7 +142,7 @@ def text_to_speech(text: str, voice: str = DEFAULT_VOICE, filename: str = None) 
 
     try:
         async def _tts():
-            communicate = edge_tts.Communicate(text, voice)
+            communicate = edge_tts.Communicate(text, voice, rate="+20%")
             await communicate.save(str(output_path))
         
         asyncio.run(_tts())
@@ -378,7 +379,7 @@ def text_to_speech_sync(text: str, voice: str = DEFAULT_VOICE) -> bytes:
     
     try:
         async def _tts():
-            communicate = edge_tts.Communicate(text, voice)
+            communicate = edge_tts.Communicate(text, voice, rate="+20%")
             audio_bytes = b""
             async for chunk in communicate.stream():
                 if chunk["type"] == "audio":
