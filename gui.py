@@ -924,26 +924,17 @@ class MainWindow(QMainWindow):
     def _safe_status(self, text: str):
         """Thread-safe обновление статуса голоса."""
         try:
-            QMetaObject.invokeMethod(
-                self.voice_status, "setText",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, text)
-            )
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, lambda: self.voice_status.setText(text))
         except RuntimeError:
-            pass  # C++ object deleted
+            pass
     
     def _safe_transcript(self, text: str):
         """Thread-safe показ распознанного текста."""
         try:
-            QMetaObject.invokeMethod(
-                self.transcript_label, "setText",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, f'"{text}"')
-            )
-            QMetaObject.invokeMethod(
-                self.transcript_label, "show",
-                Qt.ConnectionType.QueuedConnection
-            )
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, lambda: self.transcript_label.setText(f'"{text}"'))
+            QTimer.singleShot(0, self.transcript_label.show)
         except RuntimeError:
             pass
     
@@ -975,29 +966,18 @@ class MainWindow(QMainWindow):
     
     def _safe_mic_reset(self):
         """Thread-safe сброс кнопки микрофона."""
-        from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
         try:
-            QMetaObject.invokeMethod(
-                self.mic_btn, "setEnabled",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(bool, True)
-            )
-            QMetaObject.invokeMethod(
-                self.mic_btn, "setText",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, "🎤 Говорить")
-            )
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, lambda: self.mic_btn.setEnabled(True))
+            QTimer.singleShot(0, lambda: self.mic_btn.setText("🎤 Говорить"))
         except RuntimeError:
             pass
     
     def _safe_refresh(self):
         """Thread-safe обновление таблицы."""
-        from PyQt6.QtCore import QMetaObject, Qt
         try:
-            QMetaObject.invokeMethod(
-                self, "refresh_table",
-                Qt.ConnectionType.QueuedConnection
-            )
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, self.refresh_table)
         except RuntimeError:
             pass
     
